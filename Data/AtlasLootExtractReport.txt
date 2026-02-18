@@ -1,0 +1,45 @@
+AtlasLoot extraction report
+==========================
+Parsed files: 22
+Unique AtlasLoot tables: 2028
+BisEquip slots generated: 16
+Unique item IDs generated: 10338
+
+Module rows:
+- PVP: 4584
+- WotLKDungeons: 1252
+- BCDungeonsHeroic: 786
+- WotLKRaid: 7900
+- BCRaid: 1509
+- Reputations: 310
+- WorldEvents: 284
+- WorldBosses: 108
+- Crafting: 502
+- Dailies: 1782
+- Sets: 6274
+- Emblems: 824
+- Legendary: 34
+
+Files:
+- AddOns:AtlasLoot_OriginalWoW\originalwow.lua
+- AddOns:AtlasLoot_OriginalWoW\localization.lua
+- AddOns:AtlasLoot_BurningCrusade\burningcrusade.lua
+- AddOns:AtlasLoot_BurningCrusade\localization.lua
+- AddOns:AtlasLoot_Crafting\crafting.lua
+- AddOns:AtlasLoot_Crafting\localization.lua
+- AddOns:AtlasLoot_WorldEvents\worldevents.lua
+- AddOns:AtlasLoot_WorldEvents\localization.lua
+- AddOns:AtlasLoot_WrathoftheLichKing\wrathofthelichking.lua
+- AddOns:AtlasLoot_WrathoftheLichKing\localization.lua
+- AddOns:AtlasLoot_Sirus\sirus.lua
+- AddOns:AtlasLoot_PVP\pvp.lua
+- AtlasLoot:AtlasLoot_BurningCrusade\burningcrusade.lua
+- AtlasLoot:AtlasLoot_BurningCrusade\localization.lua
+- AtlasLoot:AtlasLoot_Crafting\crafting.lua
+- AtlasLoot:AtlasLoot_Crafting\localization.lua
+- AtlasLoot:AtlasLoot_WorldEvents\worldevents.lua
+- AtlasLoot:AtlasLoot_WorldEvents\localization.lua
+- AtlasLoot:AtlasLoot_WrathoftheLichKing\wrathofthelichking.lua
+- AtlasLoot:AtlasLoot_WrathoftheLichKing\localization.lua
+- AtlasLoot:AtlasLoot_Sirus\sirus.lua
+- AtlasLoot:AtlasLoot_PVP\pvp.lua

@@ -1,0 +1,29 @@
+## Interface: 30300
+## Title: BiSPlanner
+## Notes: BiS list builder for Sirus server - equip slots, stats, save/load sets
+## Author: Arcade
+## Version: 1.0
+## Dependencies: Ace3
+## SavedVariables: BiSPlannerDB
+
+Data\Modules\ModuleRegistry.lua
+Data\Modules\PVP.lua
+Data\Modules\WotLKDungeons.lua
+Data\Modules\BCDungeonsHeroic.lua
+Data\Modules\WotLKRaid.lua
+Data\Modules\BCRaid.lua
+Data\Modules\Reputations.lua
+Data\Modules\WorldEvents.lua
+Data\Modules\WorldBosses.lua
+Data\Modules\Crafting.lua
+Data\Modules\Dailies.lua
+Data\Modules\Sets.lua
+Data\Modules\Emblems.lua
+Data\Modules\Legendary.lua
+Core\BiSPlanner.lua
+Core\ItemData.lua
+Core\ModuleData.lua
+Core\Stats.lua
+Libraries\UICompat.lua
+UI\Frame.lua
+UI\ItemPicker.lua
