@@ -1,6 +1,6 @@
 --[[ Module-based data API. Single source of truth: Data/Modules/*.lua ]]
-
-BiSPlanner_ModuleData = BiSPlanner_ModuleData or {}
+-- Modules load first and populate BisEquip_ModuleData; we must preserve it after rename to BiSPlanner
+BiSPlanner_ModuleData = BiSPlanner_ModuleData or BisEquip_ModuleData or {}
 BisEquip_ModuleData = BiSPlanner_ModuleData -- Backward compatibility
 BiSPlanner_ItemDB = BiSPlanner_ItemDB or {}
 BisEquip_ItemDB = BiSPlanner_ItemDB -- Backward compatibility
@@ -343,7 +343,11 @@ local function BuildNodeForSlot(cache, nodeId, slotId)
     }
 end
 
+local HIERARCHY_CACHE = {}
+
 local function GetHierarchyForSlotFromModules(slotId)
+    local cached = HIERARCHY_CACHE[slotId]
+    if cached then return cached end
     local c = BuildModuleCache()
     if not c then return {} end
     local lookupSlot = SlotForLookup(slotId)
@@ -365,10 +369,15 @@ local function GetHierarchyForSlotFromModules(slotId)
             }
         end
     end
+    HIERARCHY_CACHE[slotId] = out
     return out
 end
 
+local SOURCES_CACHE = {}
+
 local function GetSourcesForSlotFromModules(slotId)
+    local cached = SOURCES_CACHE[slotId]
+    if cached then return cached end
     local tree = GetHierarchyForSlotFromModules(slotId)
     local out = {}
     local seen = {}
@@ -383,6 +392,7 @@ local function GetSourcesForSlotFromModules(slotId)
     end
     walk(tree)
     table.sort(out, function(a, b) return tostring(a.name) < tostring(b.name) end)
+    SOURCES_CACHE[slotId] = out
     return out
 end
 

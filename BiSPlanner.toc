@@ -5,6 +5,7 @@
 ## Version: 1.0
 ## Dependencies: Ace3
 ## SavedVariables: BiSPlannerDB
+## IconTexture: Interface\AddOns\BiSPlanner\Textures\BiSPlannerMinimap.blp
 
 Data\Modules\ModuleRegistry.lua
 Data\Modules\PVP.lua
@@ -25,5 +26,6 @@ Core\ItemData.lua
 Core\ModuleData.lua
 Core\Stats.lua
 Libraries\UICompat.lua
+UI\Styles.lua
 UI\Frame.lua
 UI\ItemPicker.lua

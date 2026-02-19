@@ -38,7 +38,7 @@ local DISPLAY_NAMES = {
     ["ITEM_MOD_HIT_RATING_SHORT"] = "Меткость",
     ["ITEM_MOD_CRIT_RATING_SHORT"] = "Крит",
     ["ITEM_MOD_HASTE_RATING_SHORT"] = "Скорость",
-    ["ITEM_MOD_EXPERTISE_RATING_SHORT"] = "Экспертоза",
+    ["ITEM_MOD_EXPERTISE_RATING_SHORT"] = "Мастерство",
     ["ITEM_MOD_RESILIENCE_RATING_SHORT"] = "Устойчивость",
     ["ITEM_MOD_ATTACK_POWER_SHORT"] = "Сила атаки",
     ["ITEM_MOD_RANGED_ATTACK_POWER_SHORT"] = "Сила атаки (дальний бой)",
@@ -49,6 +49,7 @@ local DISPLAY_NAMES = {
     ["ITEM_MOD_PARRY_RATING_SHORT"] = "Парирование",
     ["ITEM_MOD_DEFENSE_SKILL_RATING_SHORT"] = "Защита",
 }
+-- WotLK 3.3.5: armor pen 1339.6 rating = 100%, so 1% = 13.396
 local RATING_TO_PCT = {
     ["ITEM_MOD_HIT_RATING_SHORT"] = 32.79, ["ITEM_MOD_HIT_MELEE_RATING_SHORT"] = 32.79,
     ["ITEM_MOD_HIT_RANGED_RATING_SHORT"] = 32.79, ["ITEM_MOD_HIT_SPELL_RATING_SHORT"] = 26.23,
@@ -57,6 +58,7 @@ local RATING_TO_PCT = {
     ["ITEM_MOD_HASTE_RATING_SHORT"] = 32.79, ["ITEM_MOD_HASTE_MELEE_RATING_SHORT"] = 32.79,
     ["ITEM_MOD_HASTE_RANGED_RATING_SHORT"] = 32.79, ["ITEM_MOD_HASTE_SPELL_RATING_SHORT"] = 32.79,
     ["ITEM_MOD_EXPERTISE_RATING_SHORT"] = 32.79, ["ITEM_MOD_RESILIENCE_RATING_SHORT"] = 45.91,
+    ["ITEM_MOD_ARMOR_PENETRATION_RATING_SHORT"] = 13.396, ["ITEM_MOD_ARMOR_PENETRATION_RATING"] = 13.396,
 }
 
 -- WotLK 3.3.5 (level 80): 1 expertise point ~= 8.197387 expertise rating.
@@ -78,9 +80,19 @@ function BiSPlanner_SetSelectedClass(classId)
     local db = BiSPlannerDB or BisEquipDB
     if not db then return end
     db.selectedClass = classId
-    -- Sync to both DBs
-    if BiSPlannerDB then BiSPlannerDB.selectedClass = classId end
-    if BisEquipDB then BisEquipDB.selectedClass = classId end
+    -- Clear spec if it doesn't belong to new class
+    if db.selectedSpec and classId then
+        local specs = BiSPlanner_CLASS_SPECS and BiSPlanner_CLASS_SPECS[classId]
+        local valid = false
+        if specs then
+            for _, sp in ipairs(specs) do
+                if sp.id == db.selectedSpec then valid = true break end
+            end
+        end
+        if not valid then db.selectedSpec = nil end
+    end
+    if BiSPlannerDB then BiSPlannerDB.selectedClass = classId; BiSPlannerDB.selectedSpec = db.selectedSpec end
+    if BisEquipDB then BisEquipDB.selectedClass = classId; BisEquipDB.selectedSpec = db.selectedSpec end
     if BiSPlanner_RefreshStats then BiSPlanner_RefreshStats() elseif BisEquip_RefreshStats then BisEquip_RefreshStats() end
 end
 
@@ -121,6 +133,31 @@ function BiSPlanner_GetTotalStats()
     return result.total
 end
 
+-- For ItemPicker preview: stats with one slot overridden by itemId
+function BiSPlanner_GetTotalStatsWithDelta(baseSet, overrideSlot, overrideItemId)
+    BisEquip_GetTotalStatsWithDelta = BiSPlanner_GetTotalStatsWithDelta -- Backward compatibility
+    local total = {}
+    local set = baseSet or ((BiSPlanner and BiSPlanner:GetCurrentSet()) or (BisEquip and BisEquip:GetCurrentSet()))
+    if not set then return total, {} end
+    local getStats = BiSPlanner_GetItemStats or BisEquip_GetItemStats
+    if not getStats then return total, {} end
+    for slotId, itemId in pairs(set) do
+        if itemId and slotId ~= overrideSlot then
+            local st = getStats(itemId) or {}
+            for k, v in pairs(st) do
+                if type(v) == "number" then total[k] = (total[k] or 0) + v end
+            end
+        end
+    end
+    if overrideSlot and overrideItemId then
+        local st = getStats(overrideItemId) or {}
+        for k, v in pairs(st) do
+            if type(v) == "number" then total[k] = (total[k] or 0) + v end
+        end
+    end
+    return total
+end
+
 function BiSPlanner_FormatStatLine(key, value)
     BisEquip_FormatStatLine = BiSPlanner_FormatStatLine -- Backward compatibility
     local name = DISPLAY_NAMES[key] or key
@@ -132,12 +169,22 @@ function BiSPlanner_FormatStatLine(key, value)
     return name, tostring(value)
 end
 
-local STAT_LINE_HEIGHT = 16
-local SECTION_HEADER_HEIGHT = 18
-local SECTION_GAP = 6
+-- For ItemPicker delta display: returns rating divisor for percent, or nil for non-rating stats
+function BiSPlanner_GetRatingPercentDivisor(key)
+    BisEquip_GetRatingPercentDivisor = BiSPlanner_GetRatingPercentDivisor -- Backward compatibility
+    return RATING_TO_PCT[key]
+end
+
+local S = BiSPlanner_Styles or {}
+local ROW_HEIGHT = (S.ROW_HEIGHT or 18)
+local CARD_HEADER = (S.CARD_HEADER or 24)
+local STAT_LINE_HEIGHT = ROW_HEIGHT
+local SECTION_HEADER_HEIGHT = CARD_HEADER
+local SECTION_GAP = (S.PADDING_BLOCK or 8)
 local STAT_LABEL_WIDTH = 140
 local STAT_VALUE_WIDTH = 80
 local STAT_COLUMN_GAP = 8
+local CARD_COLLAPSED = {}
 
 local CLASS_SECTION_VISIBILITY = {
     WARRIOR = { melee = true, ranged = false, magic = false, defense = true },
@@ -151,6 +198,67 @@ local CLASS_SECTION_VISIBILITY = {
     DRUID = { melee = true, ranged = false, magic = true, defense = true },
     DEATHKNIGHT = { melee = true, ranged = false, magic = false, defense = true },
 }
+
+-- Spec dropdown: id -> { melee, ranged, magic, defense }
+BiSPlanner_CLASS_SPECS = {
+    WARRIOR = { { id = "arms", name = "Оружие" }, { id = "fury", name = "Неистовство" }, { id = "prot", name = "Защита" } },
+    PALADIN = { { id = "ret", name = "Ретри" }, { id = "holy", name = "Свет" }, { id = "prot", name = "Защита" } },
+    HUNTER = { { id = "bm", name = "Повелитель зверей" }, { id = "mm", name = "Стрельба" }, { id = "sv", name = "Выживание" } },
+    ROGUE = { { id = "assass", name = "Ликвидация" }, { id = "combat", name = "Бой" }, { id = "subtl", name = "Скрытность" } },
+    PRIEST = { { id = "disc", name = "Послушание" }, { id = "holy", name = "Свет" }, { id = "shadow", name = "Тьма" } },
+    SHAMAN = { { id = "elem", name = "Стихии" }, { id = "enh", name = "Совершенствование" }, { id = "resto", name = "Исцеление" } },
+    MAGE = { { id = "arcane", name = "Тайная магия" }, { id = "fire", name = "Огонь" }, { id = "frost", name = "Лёд" } },
+    WARLOCK = { { id = "affl", name = "Колдовство" }, { id = "demo", name = "Демонология" }, { id = "destr", name = "Разрушение" } },
+    DRUID = { { id = "balance", name = "Баланс" }, { id = "feral", name = "Сила зверя" }, { id = "resto", name = "Исцеление" } },
+    DEATHKNIGHT = { { id = "blood", name = "Кровь" }, { id = "frost", name = "Лёд" }, { id = "unholy", name = "Нечестивость" } },
+}
+BisEquip_CLASS_SPECS = BiSPlanner_CLASS_SPECS
+
+local SPEC_PROFILES = {
+    ret = { melee = true, ranged = false, magic = false, defense = false },
+    holy = { melee = false, ranged = false, magic = true, defense = true },
+    prot = { melee = true, ranged = false, magic = false, defense = true },
+    arms = { melee = true, ranged = false, magic = false, defense = false },
+    fury = { melee = true, ranged = false, magic = false, defense = false },
+    bm = { melee = false, ranged = true, magic = false, defense = false },
+    mm = { melee = false, ranged = true, magic = false, defense = false },
+    sv = { melee = false, ranged = true, magic = false, defense = false },
+    assass = { melee = true, ranged = false, magic = false, defense = false },
+    combat = { melee = true, ranged = false, magic = false, defense = false },
+    subtl = { melee = true, ranged = false, magic = false, defense = false },
+    disc = { melee = false, ranged = false, magic = true, defense = false },
+    shadow = { melee = false, ranged = false, magic = true, defense = false },
+    elem = { melee = false, ranged = false, magic = true, defense = false },
+    enh = { melee = true, ranged = false, magic = false, defense = false },
+    resto = { melee = false, ranged = false, magic = true, defense = false },
+    arcane = { melee = false, ranged = false, magic = true, defense = false },
+    fire = { melee = false, ranged = false, magic = true, defense = false },
+    frost = { melee = false, ranged = false, magic = true, defense = false },
+    affl = { melee = false, ranged = false, magic = true, defense = false },
+    demo = { melee = false, ranged = false, magic = true, defense = false },
+    destr = { melee = false, ranged = false, magic = true, defense = false },
+    balance = { melee = false, ranged = false, magic = true, defense = false },
+    feral = { melee = true, ranged = false, magic = false, defense = false },
+    blood = { melee = true, ranged = false, magic = false, defense = true },
+    unholy = { melee = true, ranged = false, magic = false, defense = false },
+}
+
+function BiSPlanner_GetSelectedSpec()
+    BisEquip_GetSelectedSpec = BiSPlanner_GetSelectedSpec
+    local db = BiSPlannerDB or BisEquipDB
+    if not db or not db.selectedSpec then return nil end
+    return db.selectedSpec
+end
+
+function BiSPlanner_SetSelectedSpec(specId)
+    BisEquip_SetSelectedSpec = BiSPlanner_SetSelectedSpec
+    local db = BiSPlannerDB or BisEquipDB
+    if not db then return end
+    db.selectedSpec = specId
+    if BiSPlannerDB then BiSPlannerDB.selectedSpec = specId end
+    if BisEquipDB then BisEquipDB.selectedSpec = specId end
+    if BiSPlanner_RefreshStats then BiSPlanner_RefreshStats() end
+end
 
 local function GetCurrentClassId()
     local selected = BiSPlanner_GetSelectedClass()
@@ -232,6 +340,11 @@ local function GetDerivedAttackPower(classId, total)
     local strMult = AP_PER_STRENGTH[classId] or 0
     local agiMult = AP_PER_AGILITY[classId] or 0
     return baseAP + (str * strMult) + (agi * agiMult)
+end
+
+function BiSPlanner_GetDerivedAttackPowerForPreview(classId, total)
+    if not total then return 0 end
+    return GetDerivedAttackPower(classId, total)
 end
 
 local function GetDerivedRangedAttackPower(classId, total)
@@ -328,28 +441,43 @@ local function GetMeleeWeaponDisplay(meleeAP)
     return string.format("%d-%d", finalMin, finalMax), speedText
 end
 
-local function BuildStatsSections(total, classId)
+local function BuildStatsSections(total, classId, baseTotal)
+    -- No spec-based filtering; use class visibility only
     local profile = CLASS_SECTION_VISIBILITY[classId] or { melee = true, ranged = true, magic = true, defense = true }
     local sections = {}
+    baseTotal = baseTotal or {}
+
+    local function deltaNum(key)
+        if not baseTotal[key] and not total[key] then return nil end
+        return (total[key] or 0) - (baseTotal[key] or 0)
+    end
+    local function deltaArmor()
+        local baseA = (baseTotal["ITEM_MOD_ARMOR_SHORT"] or 0) + (baseTotal["ARMOR"] or 0)
+        local curA = (total["ITEM_MOD_ARMOR_SHORT"] or 0) + (total["ARMOR"] or 0)
+        if baseA == 0 and curA == 0 then return nil end
+        return curA - baseA
+    end
 
     sections[#sections + 1] = {
         title = "Основные",
         rows = {
-            { "Сила", FormatNumberValue(total["ITEM_MOD_STRENGTH_SHORT"]) },
-            { "Ловкость", FormatNumberValue(total["ITEM_MOD_AGILITY_SHORT"]) },
-            { "Выносливость", FormatNumberValue(total["ITEM_MOD_STAMINA_SHORT"]) },
+            { "Сила", FormatNumberValue(total["ITEM_MOD_STRENGTH_SHORT"]), deltaNum("ITEM_MOD_STRENGTH_SHORT") },
+            { "Ловкость", FormatNumberValue(total["ITEM_MOD_AGILITY_SHORT"]), deltaNum("ITEM_MOD_AGILITY_SHORT") },
+            { "Выносливость", FormatNumberValue(total["ITEM_MOD_STAMINA_SHORT"]), deltaNum("ITEM_MOD_STAMINA_SHORT") },
             {
                 "Интеллект",
                 FormatNumberValue(total["ITEM_MOD_INTELLECT_SHORT"]),
+                deltaNum("ITEM_MOD_INTELLECT_SHORT"),
                 { "Крит от интеллекта: " .. FormatIntCritBonus(classId, total["ITEM_MOD_INTELLECT_SHORT"] or 0) }
             },
-            { "Дух", FormatNumberValue(total["ITEM_MOD_SPIRIT_SHORT"]) },
-            { "Броня", FormatNumberValue(total["ITEM_MOD_ARMOR_SHORT"]) },
+            { "Дух", FormatNumberValue(total["ITEM_MOD_SPIRIT_SHORT"]), deltaNum("ITEM_MOD_SPIRIT_SHORT") },
+            { "Броня", FormatNumberValue((total["ITEM_MOD_ARMOR_SHORT"] or 0) + (total["ARMOR"] or 0)), deltaArmor() },
         }
     }
 
     if profile.melee then
         local meleeAP = GetDerivedAttackPower(classId, total)
+        local baseAP = GetDerivedAttackPower(classId, baseTotal)
         local meleeDmg, meleeSpeed = GetMeleeWeaponDisplay(meleeAP)
         local meleeHit = StatValue(total, { "ITEM_MOD_HIT_RATING_SHORT", "ITEM_MOD_HIT_MELEE_RATING_SHORT" })
         local meleeCrit = StatValue(total, { "ITEM_MOD_CRIT_RATING_SHORT", "ITEM_MOD_CRIT_MELEE_RATING_SHORT" })
@@ -359,14 +487,14 @@ local function BuildStatsSections(total, classId)
         sections[#sections + 1] = {
             title = "Ближний бой",
             rows = {
-                { "Урон", meleeDmg },
-                { "Скорость", meleeSpeed },
-                { "Сила атаки", FormatNumberValue(meleeAP) },
-                { "Рейт. меткости", FormatRating(meleeHit, 32.79) },
-                { "Крит. удар", FormatRating(meleeCrit, 45.91) },
-                { "Рейт. скорости", FormatRating(meleeHaste, 32.79) },
-                { "Мастерство", FormatConvertedValue(expertise, EXPERTISE_RATING_PER_MASTERY) },
-                { "Пробивание брони", FormatRating(arp, 13.99) },
+                { "Урон", meleeDmg, nil },
+                { "Скорость", meleeSpeed, nil },
+                { "Сила атаки", FormatNumberValue(meleeAP), meleeAP - baseAP },
+                { "Меткость", FormatRating(meleeHit, 32.79), nil },
+                { "Крит", FormatRating(meleeCrit, 45.91), nil },
+                { "Скорость", FormatRating(meleeHaste, 32.79), nil },
+                { "Мастерство", FormatConvertedValue(expertise, EXPERTISE_RATING_PER_MASTERY), nil },
+                { "Пробивание брони", FormatRating(arp, 13.99), nil },
             }
         }
     end
@@ -379,12 +507,12 @@ local function BuildStatsSections(total, classId)
         sections[#sections + 1] = {
             title = "Дальний бой",
             rows = {
-                { "Урон", "—" },
-                { "Скорость", "—" },
-                { "Сила атаки", FormatNumberValue(rangedAP) },
-                { "Рейт. меткости", FormatRating(rangedHit, 32.79) },
-                { "Крит. удар", FormatRating(rangedCrit, 45.91) },
-                { "Рейт. скорости", FormatRating(rangedHaste, 32.79) },
+                { "Урон", "—", nil },
+                { "Скорость", "—", nil },
+                { "Сила атаки", FormatNumberValue(rangedAP), nil },
+                { "Меткость", FormatRating(rangedHit, 32.79), nil },
+                { "Крит", FormatRating(rangedCrit, 45.91), nil },
+                { "Скорость", FormatRating(rangedHaste, 32.79), nil },
             }
         }
     end
@@ -399,14 +527,14 @@ local function BuildStatsSections(total, classId)
         sections[#sections + 1] = {
             title = "Магия",
             rows = {
-                { "Доп. урон", FormatNumberValue(spellPower) },
-                { "Доп. лечение", FormatNumberValue(spellPower) },
-                { "Рейт. меткости", FormatRating(spellHit, 26.23) },
-                { "Крит. удар", FormatRating(spellCrit, 45.91) },
-                { "Рейт. скорости", FormatRating(spellHaste, 32.79) },
-                { "Пенетра", FormatNumberValue(spellPen) },
-                { "Крит от интеллекта", FormatIntCritBonus(classId, intellect) },
-                { "Дух", FormatNumberValue(total["ITEM_MOD_SPIRIT_SHORT"]) },
+                { "Доп. урон", FormatNumberValue(spellPower), nil },
+                { "Доп. лечение", FormatNumberValue(spellPower), nil },
+                { "Меткость", FormatRating(spellHit, 26.23), nil },
+                { "Крит", FormatRating(spellCrit, 45.91), nil },
+                { "Скорость", FormatRating(spellHaste, 32.79), nil },
+                { "Пенетра", FormatNumberValue(spellPen), nil },
+                { "Крит от интеллекта", FormatIntCritBonus(classId, intellect), nil },
+                { "Дух", FormatNumberValue(total["ITEM_MOD_SPIRIT_SHORT"]), nil },
             }
         }
     end
@@ -419,12 +547,12 @@ local function BuildStatsSections(total, classId)
         sections[#sections + 1] = {
             title = "Защита",
             rows = {
-                { "Броня", FormatNumberValue(total["ITEM_MOD_ARMOR_SHORT"]) },
-                { "Рейт. защиты", FormatDefenseRating(total["ITEM_MOD_DEFENSE_SKILL_RATING_SHORT"]) },
-                { "Уклонение", FormatRating(dodge, 39.35) },
-                { "Парирование", FormatRating(parry, 45.25) },
-                { "Блок", FormatRating(block, 16.39) },
-                { "Устойчивость", FormatRating(resilience, 81.97) },
+                { "Броня", FormatNumberValue((total["ITEM_MOD_ARMOR_SHORT"] or 0) + (total["ARMOR"] or 0)), deltaArmor() },
+                { "Рейт. защиты", FormatDefenseRating(total["ITEM_MOD_DEFENSE_SKILL_RATING_SHORT"]), nil },
+                { "Уклонение", FormatRating(dodge, 39.35), nil },
+                { "Парирование", FormatRating(parry, 45.25), nil },
+                { "Блок", FormatRating(block, 16.39), nil },
+                { "Устойчивость", FormatRating(resilience, 81.97), nil },
             }
         }
     end
@@ -432,124 +560,151 @@ local function BuildStatsSections(total, classId)
     return sections
 end
 
--- Stats panel: формат как в стандартном интерфейсе WoW - две колонки (название слева, значение справа)
-local statRows = {}
-local sectionHeaders = {}
+-- Stats panel: StatsCards with collapsible sections, Label | Value | Delta
+local statCards = {}
+local GREEN = (BiSPlanner_Styles and BiSPlanner_Styles.GREEN) or { 0.2, 0.8, 0.2, 1 }
+local RED = (BiSPlanner_Styles and BiSPlanner_Styles.RED) or { 0.85, 0.2, 0.2, 1 }
+local TEXT_VALUE = (BiSPlanner_Styles and BiSPlanner_Styles.TEXT_VALUE) or { 0.9, 0.9, 0.9, 1 }
 
 function BiSPlanner_RefreshStatsImpl()
     BisEquip_RefreshStatsImpl = BiSPlanner_RefreshStatsImpl -- Backward compatibility
     local container = BiSPlanner_StatsContainer or BisEquip_StatsContainer
-    if not container then 
-        -- Попытка найти контейнер если он не установлен
+    if not container then
         container = _G["BiSPlanner_StatsChild"] or _G["BisEquip_StatsChild"]
         if container then BiSPlanner_StatsContainer = container; BisEquip_StatsContainer = container end
     end
     if not container then return end
-    container:Show() -- Убеждаемся что контейнер виден
+    container:Show()
 
     local total = BiSPlanner_GetTotalStats()
     local classId = GetCurrentClassId()
-    local sections = BuildStatsSections(total, classId)
+    local sections = BuildStatsSections(total, classId, nil)
 
-    local y = -8
-    local sectionTitleFont = "GameFontNormal"
-    local rowFont = "GameFontHighlightSmall"
-
-    local function EnsureSectionHeader(idx, title)
-        if not sectionHeaders[idx] then
-            sectionHeaders[idx] = container:CreateFontString(nil, "OVERLAY", sectionTitleFont)
-            sectionHeaders[idx]:SetJustifyH("LEFT")
-        end
-        sectionHeaders[idx]:ClearAllPoints()
-        sectionHeaders[idx]:SetPoint("TOPLEFT", container, "TOPLEFT", 0, y)
-        sectionHeaders[idx]:SetText(title)
-        sectionHeaders[idx]:Show()
-        y = y - SECTION_HEADER_HEIGHT
-    end
-
-    local function EnsureRow(i)
-        if not statRows[i] then
-            statRows[i] = {}
-            statRows[i].label = container:CreateFontString(nil, "OVERLAY", rowFont)
-            statRows[i].value = container:CreateFontString(nil, "OVERLAY", rowFont)
-            statRows[i].hit = CreateFrame("Frame", nil, container)
-            statRows[i].label:SetJustifyH("LEFT")
-            statRows[i].value:SetJustifyH("RIGHT")
-            statRows[i].value:SetTextColor(0.2, 1, 0.2)
-            statRows[i].hit:SetScript("OnEnter", function(self)
-                local row = self.__row
-                if not row or not row.tooltipLines or #row.tooltipLines == 0 then return end
-                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-                GameTooltip:AddLine(row.tooltipTitle or "Детали", 1, 0.82, 0)
-                for _, line in ipairs(row.tooltipLines) do
-                    GameTooltip:AddLine(line, 0.9, 0.9, 0.9)
-                end
-                GameTooltip:Show()
-            end)
-            statRows[i].hit:SetScript("OnLeave", function()
-                GameTooltip:Hide()
-            end)
-        end
-        local row = statRows[i]
-        -- Формат как в стандартном интерфейсе: label слева, value справа, выровнено по левому краю контейнера
-        local containerWidth = math.max(container:GetWidth() or 220, 180)
-        local labelWidth = math.max(math.floor(containerWidth * 0.62), 120)
-        local valueWidth = math.max(containerWidth - labelWidth - STAT_COLUMN_GAP, 70)
-        row.label:ClearAllPoints()
-        row.value:ClearAllPoints()
-        row.label:SetPoint("TOPLEFT", container, "TOPLEFT", 0, y)
-        row.label:SetWidth(labelWidth)
-        row.value:SetPoint("TOPLEFT", container, "TOPLEFT", labelWidth + STAT_COLUMN_GAP, y)
-        row.value:SetWidth(valueWidth)
-        row.hit:ClearAllPoints()
-        row.hit:SetPoint("TOPLEFT", row.label, "TOPLEFT", 0, 0)
-        row.hit:SetSize(labelWidth + STAT_COLUMN_GAP + valueWidth, STAT_LINE_HEIGHT)
-        row.hit:EnableMouse(true)
-        row.hit.__row = row
-        y = y - STAT_LINE_HEIGHT
-        return row
-    end
-
-    local rowIdx = 1
-    for sectionIdx, section in ipairs(sections) do
-        EnsureSectionHeader(sectionIdx, section.title)
-        for _, statRow in ipairs(section.rows) do
-            local row = EnsureRow(rowIdx)
-            row.label:SetText((statRow[1] or "—") .. ":")
-            row.value:SetText(statRow[2] or "0")
-            row.tooltipTitle = statRow[1]
-            row.tooltipLines = statRow[3]
-            row.label:Show()
-            row.value:Show()
-            if row.tooltipLines and #row.tooltipLines > 0 then
-                row.hit:Show()
-            else
-                row.hit:Hide()
-            end
-            rowIdx = rowIdx + 1
-        end
-        y = y - SECTION_GAP
-    end
-
-    for i = 1, #sectionHeaders do
-        if i > #sections then sectionHeaders[i]:Hide() end
-    end
-    for i = rowIdx, #statRows do
-        if statRows[i] and statRows[i].label then
-            statRows[i].label:Hide()
-            statRows[i].value:Hide()
-            if statRows[i].hit then statRows[i].hit:Hide() end
-        end
-    end
-
-    local totalHeight = math.abs(y) + 16
-    container:SetHeight(math.max(totalHeight, 120))
     local scroll = BiSPlanner_StatsScroll or BisEquip_StatsScroll
+    local viewportH = (scroll and scroll:GetHeight()) or 120
+
+    local y = 0  -- align with gear panel top border (equipment backdrop)
+    local containerWidth = math.max(container:GetWidth() or 280, 200)
+
+    for sectionIdx, section in ipairs(sections) do
+        local card = statCards[sectionIdx]
+        if not card then
+            card = CreateFrame("Frame", "BiSPlanner_StatsCard" .. sectionIdx, container)
+            statCards[sectionIdx] = card
+            if BiSPlanner_ApplyPanelBackdrop then
+                BiSPlanner_ApplyPanelBackdrop(card)
+            end
+            card.header = card:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            card.header:SetJustifyH("LEFT")
+            card.header:SetTextColor(TEXT_VALUE[1], TEXT_VALUE[2], TEXT_VALUE[3])
+            card.collapseIcon = card:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            card.collapseIcon:SetText("-")
+            card.collapseIcon:SetTextColor(0.7, 0.7, 0.7)
+            card.rows = {}
+        end
+        local collapsed = CARD_COLLAPSED[section.title]
+        card:ClearAllPoints()
+        card:SetPoint("TOPLEFT", container, "TOPLEFT", 0, y)
+        card:SetPoint("RIGHT", container, "RIGHT", 0, 0)
+        card:SetHeight(CARD_HEADER + 2)
+        card.header:SetText(section.title)
+        card.header:SetPoint("TOPLEFT", 8, -6)
+        card.collapseIcon:SetPoint("LEFT", card.header, "RIGHT", 4, 0)
+        card.collapseIcon:SetText(collapsed and "+" or "-")
+        card.header:GetParent():SetScript("OnMouseUp", nil)
+        card:SetScript("OnMouseUp", function(self, btn)
+            if btn == "LeftButton" then
+                CARD_COLLAPSED[section.title] = not CARD_COLLAPSED[section.title]
+                BiSPlanner_RefreshStats()
+            end
+        end)
+        card:EnableMouse(true)
+
+        local CARD_BOTTOM_PAD = 10
+        local rowY = -CARD_HEADER - 4
+        if collapsed then
+            for i = 1, #card.rows do
+                if card.rows[i] and card.rows[i].frame then
+                    card.rows[i].frame:Hide()
+                end
+            end
+        else
+            for i, statRow in ipairs(section.rows) do
+                local row = card.rows[i]
+                if not row then
+                    row = {}
+                    row.frame = CreateFrame("Frame", nil, card)
+                    row.label = row.frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+                    row.value = row.frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+                    row.delta = row.frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+                    row.hit = CreateFrame("Frame", nil, row.frame)
+                    row.label:SetJustifyH("LEFT")
+                    row.value:SetJustifyH("RIGHT")
+                    row.delta:SetJustifyH("RIGHT")
+                    row.hit:SetScript("OnEnter", function(self)
+                        local r = self.__row
+                        if r and r.tooltipLines and #r.tooltipLines > 0 then
+                            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                            GameTooltip:AddLine(r.tooltipTitle or "Детали", 1, 0.82, 0)
+                            for _, line in ipairs(r.tooltipLines) do
+                                GameTooltip:AddLine(line, 0.9, 0.9, 0.9)
+                            end
+                            GameTooltip:Show()
+                        end
+                    end)
+                    row.hit:SetScript("OnLeave", function() GameTooltip:Hide() end)
+                    card.rows[i] = row
+                end
+                local valueW = 68
+                local valueRightInset = 10
+                local gapBetweenLabelAndValue = 6
+                local rowInnerWidth = math.max(120, containerWidth - 16)
+                local labelW = math.max(60, rowInnerWidth - valueW - valueRightInset - gapBetweenLabelAndValue)
+                row.frame:ClearAllPoints()
+                row.frame:SetPoint("TOPLEFT", card, "TOPLEFT", 8, rowY)
+                row.frame:SetPoint("RIGHT", card, "RIGHT", -8, 0)
+                row.frame:SetHeight(ROW_HEIGHT)
+                row.frame:Show()
+                row.label:SetPoint("LEFT", 0, 0)
+                row.label:SetWidth(labelW)
+                row.delta:SetPoint("RIGHT", row.frame, "RIGHT", 0, 0)
+                row.delta:SetWidth(0)
+                row.value:SetPoint("RIGHT", row.frame, "RIGHT", -valueRightInset, 0)
+                row.value:SetWidth(valueW)
+                row.label:SetText((statRow[1] or "—") .. ":")
+                row.value:SetText(statRow[2] or "0")
+                row.value:SetTextColor(TEXT_VALUE[1], TEXT_VALUE[2], TEXT_VALUE[3])
+                local tooltip = (type(statRow[4]) == "table") and statRow[4] or (type(statRow[3]) == "table" and statRow[3] or nil)
+                row.tooltipTitle = statRow[1]
+                row.tooltipLines = tooltip
+                row.delta:SetText("")
+                row.delta:SetWidth(0)
+                row.hit:SetAllPoints(row.frame)
+                row.hit:EnableMouse(row.tooltipLines and #row.tooltipLines > 0)
+                row.hit.__row = row
+                rowY = rowY - ROW_HEIGHT
+            end
+            card:SetHeight(CARD_HEADER + 4 + #section.rows * ROW_HEIGHT + CARD_BOTTOM_PAD)
+        end
+        if collapsed then
+            card:SetHeight(CARD_HEADER + 2)
+        end
+        for i = #section.rows + 1, #card.rows do
+            if card.rows[i] then card.rows[i].frame:Hide() end
+        end
+        y = y - (card:GetHeight() + SECTION_GAP)
+    end
+
+    for i = #sections + 1, #statCards do
+        if statCards[i] then statCards[i]:Hide() end
+    end
+
+    local totalHeight = math.abs(y)
+    container:SetHeight(math.max(totalHeight, viewportH))
+
     if scroll then
         local maxScroll = scroll:GetVerticalScrollRange() or 0
         local cur = scroll:GetVerticalScroll() or 0
-        if cur > maxScroll then
-            scroll:SetVerticalScroll(maxScroll)
-        end
+        if cur > maxScroll then scroll:SetVerticalScroll(maxScroll) end
     end
 end

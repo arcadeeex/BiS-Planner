@@ -1393,18 +1393,262 @@ function BiSPlanner_GetItemsForSlot(slotId, difficultyFilter, sourceFilter)
 end
 
 -- Scan tooltip for stats (fallback when GetItemInfo returns nil or GetItemStats fails)
+-- Use our own tooltip; LibItemSearchTooltipScanner returns NumLines()=0 when we SetHyperlink.
 local ScanTooltip = CreateFrame("GameTooltip", "BisEquipScanTooltip", UIParent, "GameTooltipTemplate")
 ScanTooltip:SetOwner(UIParent, "ANCHOR_NONE")
+ScanTooltip:Hide()
+local ScanTooltipName = ScanTooltip:GetName() or "BisEquipScanTooltip"
+
+-- Some clients/templates may miss initial font strings for custom scanner tooltips.
+local function EnsureScanTooltipFontStrings()
+    if _G[ScanTooltipName .. "TextLeft1"] then return end
+    local left = ScanTooltip:CreateFontString(ScanTooltipName .. "TextLeft1", nil, "GameTooltipText")
+    local right = ScanTooltip:CreateFontString(ScanTooltipName .. "TextRight1", nil, "GameTooltipText")
+    ScanTooltip:AddFontStrings(left, right)
+end
+EnsureScanTooltipFontStrings()
+
+-- Armor cache: itemId -> armor value (populated by deferred scan when sync fails)
+local ARMOR_CACHE = {}
+local PENDING_ARMOR_SCAN = {}
+local ARMOR_UPDATE_FRAME = nil
+local ARMOR_DEBUG_ENABLED = false
+local ARMOR_DEBUG_ITEMID = nil -- set itemId for focused logs (e.g. via BiSPlanner_DebugArmorForItem)
+
+local function ArmorDebug(itemId, msg)
+    if not ARMOR_DEBUG_ENABLED then return end
+    if ARMOR_DEBUG_ITEMID and tonumber(itemId) ~= ARMOR_DEBUG_ITEMID then return end
+    local out = "|cff33ff99BiSPlanner ArmorDebug|r [" .. tostring(itemId or "?") .. "] " .. tostring(msg or "")
+    if DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME.AddMessage then
+        DEFAULT_CHAT_FRAME:AddMessage(out)
+    elseif ChatFrame1 and ChatFrame1.AddMessage then
+        ChatFrame1:AddMessage(out)
+    end
+end
+
+-- Strip color codes for tooltip parsing (WoW uses |cAARRGGBB and |r)
+local function StripTooltipColors(s)
+    if not s or s == "" then return "" end
+    return s:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+end
+
+local function NormalizeTooltipText(s)
+    if not s or s == "" then return "" end
+    s = StripTooltipColors(s)
+    s = s:gsub("|T.-|t", "") -- embedded textures/icons
+    s = s:gsub("\194\160", " ") -- NBSP
+    s = s:gsub("\226\128\175", " ") -- narrow NBSP
+    return s
+end
+
+local ARMOR_LABEL_RU = "броня"
+local ARMOR_LABEL_EN = "armor"
+local ARMOR_GLOBAL_LABEL = _G["ARMOR"] and tostring(_G["ARMOR"]):lower() or ARMOR_LABEL_RU
+
+local function LooksLikeArmorLine(text)
+    local s = tostring(text or ""):lower()
+    return s:find(ARMOR_LABEL_RU, 1, true) or s:find(ARMOR_LABEL_EN, 1, true) or s:find(ARMOR_GLOBAL_LABEL, 1, true)
+end
+
+-- Пропускать строки из описания прока/эффекта (напр. "повышает броню на 657 на 15 сек") — не должны попадать в сравнение статов
+local ARMOR_PROC_SKIP_PATTERNS = {
+    -- RU
+    "при получении урона", "при активации", "при нанесении", "при применении",
+    "повышает ваш показатель брони", "который повышает", "вероятностью",
+    "суммируясь", "на 15 сек", "на 10 раз", "на 20 раз",
+    -- EN
+    "upon taking damage", "upon dealing", "increases your armor by", "stacking",
+    "for 15 sec", "chance to", "when you",
+}
+local function IsArmorProcEffectLine(text)
+    if not text or #text < 40 then return false end
+    local s = tostring(text):lower()
+    for _, pat in ipairs(ARMOR_PROC_SKIP_PATTERNS) do
+        if s:find(pat, 1, true) then return true end
+    end
+    return false
+end
+
+local function ExtractFirstNumber(text)
+    if not text or text == "" then return nil end
+    local token = text:match("(%d[%d%s\194\160\226\128\175]*)")
+    if not token then return nil end
+    local digits = token:gsub("%D", "")
+    if digits == "" then return nil end
+    local n = tonumber(digits)
+    if n and n > 0 then return n end
+    return nil
+end
+
+local function DumpTooltipSample(tooltip, itemId, stage)
+    if not ARMOR_DEBUG_ENABLED or not tooltip then return end
+    local numLines = (tooltip.NumLines and tooltip:NumLines()) or 0
+    local name = tooltip:GetName() or ScanTooltipName or "?"
+    ArmorDebug(itemId, tostring(stage) .. " tooltip=" .. tostring(name) .. " lines=" .. tostring(numLines))
+    local maxLines = math.min(math.max(numLines, 12), 20)
+    for i = 1, maxLines do
+        local left = _G[name .. "TextLeft" .. i] or _G[ScanTooltipName .. "TextLeft" .. i] or _G["GameTooltipTextLeft" .. i]
+        local right = _G[name .. "TextRight" .. i] or _G[ScanTooltipName .. "TextRight" .. i] or _G["GameTooltipTextRight" .. i]
+        local ltext = NormalizeTooltipText(left and left:GetText() or "")
+        local rtext = NormalizeTooltipText(right and right:GetText() or "")
+        if ltext ~= "" or rtext ~= "" then
+            ArmorDebug(itemId, string.format("%s line %d: L='%s' R='%s'", tostring(stage), i, ltext, rtext))
+        end
+    end
+end
+
+-- Parse armor from tooltip (RU: "Броня" + value, EN: "Armor" + value)
+-- Accepts tooltip frame or nil to use GameTooltip
+local function ParseArmorFromTooltip(tooltip, itemId, stage)
+    tooltip = tooltip or GameTooltip
+    if not tooltip then return nil end
+    local name = tooltip:GetName() or ScanTooltipName or "GameTooltip"
+    local numLines = (tooltip.NumLines and tooltip:NumLines()) or 0
+    local maxLines = math.max(numLines, 40)
+    for i = 1, maxLines do
+        local left = _G[name .. "TextLeft" .. i] or _G[ScanTooltipName .. "TextLeft" .. i] or _G["GameTooltipTextLeft" .. i]
+        local right = _G[name .. "TextRight" .. i] or _G[ScanTooltipName .. "TextRight" .. i] or _G["GameTooltipTextRight" .. i]
+        local ltext = NormalizeTooltipText(left and left:GetText() or "")
+        local rtext = NormalizeTooltipText(right and right:GetText() or "")
+        if ltext ~= "" and (LooksLikeArmorLine(ltext) or LooksLikeArmorLine(ltext .. " " .. rtext)) then
+            if IsArmorProcEffectLine(ltext) or IsArmorProcEffectLine(rtext) or IsArmorProcEffectLine(ltext .. " " .. rtext) then
+                -- skip proc/effect lines (e.g. trinket "increases armor by 657 for 15 sec")
+            else
+                local armor = ExtractFirstNumber(ltext) or ExtractFirstNumber(rtext) or ExtractFirstNumber(ltext .. " " .. rtext)
+                ArmorDebug(itemId, string.format("%s match line %d: L='%s' R='%s' => %s", tostring(stage or "scan"), i, ltext, rtext, tostring(armor)))
+                return armor
+            end
+        end
+    end
+
+    -- Region fallback: handles clients where named TextLeftN globals are unreliable.
+    local regions = { tooltip:GetRegions() }
+    for _, region in ipairs(regions) do
+        if region and region.GetObjectType and region:GetObjectType() == "FontString" then
+            local text = NormalizeTooltipText(region:GetText() or "")
+            if text ~= "" and LooksLikeArmorLine(text) and not IsArmorProcEffectLine(text) then
+                local n = ExtractFirstNumber(text)
+                ArmorDebug(itemId, string.format("%s region match: '%s' => %s", tostring(stage or "scan"), text, tostring(n)))
+                if n then return n end
+            end
+        end
+    end
+    ArmorDebug(itemId, tostring(stage or "scan") .. " no armor parsed")
+    return nil
+end
+
+-- Sync scan: SetHyperlink (LibItemSearch style, no Show) + Show/Hide retries
+local function ScanTooltipForArmorSync(itemId)
+    local link = "item:" .. itemId .. ":0:0:0:0:0:0:0"
+    ArmorDebug(itemId, "ScanTooltipForArmorSync start link=" .. link)
+    -- Try 1: SetHyperlink only (like LibItemSearch - no Show)
+    ScanTooltip:ClearLines()
+    ScanTooltip:SetHyperlink(link)
+    DumpTooltipSample(ScanTooltip, itemId, "try1")
+    local armor = ParseArmorFromTooltip(ScanTooltip, itemId, "try1")
+    if armor then return armor end
+    -- Try 2-4: Show, parse while visible, then Hide (parsing after Hide may read empty)
+    for attempt = 2, 4 do
+        ScanTooltip:ClearLines()
+        ScanTooltip:SetHyperlink(link)
+        ScanTooltip:Show()
+        if attempt == 2 then
+            DumpTooltipSample(ScanTooltip, itemId, "try2")
+        end
+        armor = ParseArmorFromTooltip(ScanTooltip, itemId, "try" .. tostring(attempt))
+        ScanTooltip:Hide()
+        if armor then return armor end
+    end
+    ArmorDebug(itemId, "ScanTooltipForArmorSync failed")
+    return nil
+end
+
+-- Scan armor using GameTooltip (populates reliably when shown); backup/restore to avoid disrupting user.
+local function ScanArmorWithGameTooltip(itemId)
+    local link = "item:" .. itemId .. ":0:0:0:0:0:0:0"
+    local prevOwner = GameTooltip:GetOwner()
+    GameTooltip:ClearLines()
+    GameTooltip:SetOwner(UIParent, "ANCHOR_NONE")
+    GameTooltip:SetHyperlink(link)
+    GameTooltip:Show()
+    local armor = ParseArmorFromTooltip(GameTooltip, itemId, "GameTooltip")
+    GameTooltip:Hide()
+    if prevOwner then
+        GameTooltip:SetOwner(prevOwner, "ANCHOR_NONE")
+    end
+    return armor
+end
+
+-- Items we've already tried (and failed) - avoid infinite retry loop
+local ARMOR_SCAN_FAILED = {}
+
+function BiSPlanner_ClearArmorScanFailed()
+    ARMOR_SCAN_FAILED = {}
+end
+BisEquip_ClearArmorScanFailed = BiSPlanner_ClearArmorScanFailed
+
+-- Deferred scan: use GameTooltip (populates reliably); runs next frame to avoid blocking.
+local function DoDeferredArmorScan()
+    if next(PENDING_ARMOR_SCAN) == nil then return end
+    local toScan = {}
+    for itemId, _ in pairs(PENDING_ARMOR_SCAN) do
+        toScan[#toScan + 1] = itemId
+    end
+    PENDING_ARMOR_SCAN = {}
+    local cachedCount = 0
+    for _, itemId in ipairs(toScan) do
+        local armor = ScanArmorWithGameTooltip(itemId) or ScanTooltipForArmorSync(itemId)
+        if armor and armor > 0 then
+            ARMOR_CACHE[itemId] = armor
+            cachedCount = cachedCount + 1
+        else
+            ARMOR_SCAN_FAILED[itemId] = true
+        end
+    end
+    if cachedCount > 0 then
+        if BiSPlanner_RefreshStats then BiSPlanner_RefreshStats()
+        elseif BisEquip_RefreshStats then BisEquip_RefreshStats() end
+    end
+end
+
+local function ScheduleDeferredArmorScan(itemId)
+    if ARMOR_SCAN_FAILED[itemId] then return end
+    if PENDING_ARMOR_SCAN[itemId] then return end
+    PENDING_ARMOR_SCAN[itemId] = true
+    if not ARMOR_UPDATE_FRAME then
+        ARMOR_UPDATE_FRAME = CreateFrame("Frame")
+    end
+    ARMOR_UPDATE_FRAME:SetScript("OnUpdate", function(self)
+        self:SetScript("OnUpdate", nil)
+        DoDeferredArmorScan()
+    end)
+end
 
 -- GetItemStats in 3.3.5 uses keys from GlobalStrings (e.g. ITEM_MOD_STRENGTH_SHORT).
 -- Returns table of stat key -> value (number). Uses tooltip scan if item not in cache.
 function BiSPlanner_GetItemStats(itemId)
     BisEquip_GetItemStats = BiSPlanner_GetItemStats -- Backward compatibility
+    local function hasPositiveArmor(t)
+        return ((t["ITEM_MOD_ARMOR_SHORT"] or 0) > 0) or ((t["ARMOR"] or 0) > 0)
+    end
+    local function addArmorIfNeeded(t)
+        if hasPositiveArmor(t) then return end
+        ArmorDebug(itemId, "GetItemStats missing armor keys; ITEM_MOD_ARMOR_SHORT=" .. tostring(t["ITEM_MOD_ARMOR_SHORT"]) .. ", ARMOR=" .. tostring(t["ARMOR"]))
+        local armor = ARMOR_CACHE[itemId] or ScanArmorWithGameTooltip(itemId) or ScanTooltipForArmorSync(itemId)
+        if armor and armor > 0 then
+            t["ARMOR"] = armor
+            ArmorDebug(itemId, "Armor assigned from scanner: " .. tostring(armor))
+        elseif not ARMOR_CACHE[itemId] then
+            ArmorDebug(itemId, "Armor not found, scheduling deferred scan")
+            ScheduleDeferredArmorScan(itemId)
+        end
+    end
     local link = select(2, GetItemInfo(itemId))
     if link and GetItemStats then
         local t = {}
         GetItemStats(link, t)
         if next(t) then
+            addArmorIfNeeded(t)
             return t
         end
     end
@@ -1417,8 +1661,66 @@ function BiSPlanner_GetItemStats(itemId)
     if link and GetItemStats then
         local t = {}
         GetItemStats(link, t)
-        return t
+        if next(t) then
+            addArmorIfNeeded(t)
+            return t
+        end
     end
+    -- Last resort: parse armor from tooltip only
+    local armor = ARMOR_CACHE[itemId] or ScanArmorWithGameTooltip(itemId) or ScanTooltipForArmorSync(itemId)
+    if armor and armor > 0 then
+        ArmorDebug(itemId, "Last resort armor-only return: " .. tostring(armor))
+        return { ["ARMOR"] = armor }
+    end
+    ArmorDebug(itemId, "Last resort failed; returning empty stats")
+    ScheduleDeferredArmorScan(itemId)
     return {}
 end
+
+-- Manual one-shot armor debug for a specific item (used from slot hover).
+-- When source=slot:N: GameTooltip is ALREADY showing the item - parse it directly.
+-- Otherwise use ScanArmorWithGameTooltip.
+function BiSPlanner_DebugArmorForItem(itemId, sourceTag)
+    if not itemId then return nil end
+    local id = tonumber(itemId)
+    if not id then return nil end
+    local prevEnabled = ARMOR_DEBUG_ENABLED
+    local prevFilter = ARMOR_DEBUG_ITEMID
+    ARMOR_DEBUG_ENABLED = true
+    ARMOR_DEBUG_ITEMID = id
+    ArmorDebug(id, "manual debug start source=" .. tostring(sourceTag or "manual"))
+    local link = select(2, GetItemInfo(id))
+    local t = {}
+    if link and GetItemStats then
+        GetItemStats(link, t)
+    end
+    ArmorDebug(id, "manual getItemStats ITEM_MOD_ARMOR_SHORT=" .. tostring(t["ITEM_MOD_ARMOR_SHORT"]) .. ", ARMOR=" .. tostring(t["ARMOR"]))
+    local armor
+    if sourceTag and sourceTag:match("^slot:") and GameTooltip:IsShown() then
+        local numLines = (GameTooltip.NumLines and GameTooltip:NumLines()) or 0
+        armor = ParseArmorFromTooltip(GameTooltip, id, "hover")
+        if not armor and numLines == 0 then
+            local f = CreateFrame("Frame")
+            f:SetScript("OnUpdate", function(self)
+                self:SetScript("OnUpdate", nil)
+                ARMOR_DEBUG_ITEMID = id
+                ARMOR_DEBUG_ENABLED = true
+                numLines = (GameTooltip.NumLines and GameTooltip:NumLines()) or 0
+                armor = ParseArmorFromTooltip(GameTooltip, id, "hover-deferred")
+                ARMOR_DEBUG_ITEMID = prevFilter
+                ARMOR_DEBUG_ENABLED = prevEnabled
+            end)
+            ARMOR_DEBUG_ITEMID = prevFilter
+            ARMOR_DEBUG_ENABLED = prevEnabled
+            return nil
+        end
+    else
+        armor = ScanArmorWithGameTooltip(id)
+    end
+    ArmorDebug(id, "result=" .. tostring(armor))
+    ARMOR_DEBUG_ITEMID = prevFilter
+    ARMOR_DEBUG_ENABLED = prevEnabled
+    return armor
+end
+BisEquip_DebugArmorForItem = BiSPlanner_DebugArmorForItem
 

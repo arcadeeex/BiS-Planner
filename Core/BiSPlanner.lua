@@ -142,8 +142,9 @@ local function EnsureMinimapButton()
     local icon = btn:CreateTexture(nil, "ARTWORK")
     icon:SetSize(18, 18)
     icon:SetPoint("CENTER", 0, 0)
-    icon:SetTexture("Interface\\Icons\\INV_Misc_Note_01")
+    icon:SetTexture("Interface\\AddOns\\BiSPlanner\\Textures\\BiSPlannerMinimap")
     icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    icon:SetBlendMode("BLEND")  -- proper alpha for transparency
     btn.icon = icon
 
     local border = btn:CreateTexture(nil, "OVERLAY")
@@ -216,6 +217,8 @@ function BiSPlanner:OnInitialize()
     self:InitDB()
     -- Keep /bis command for convenience
     self:RegisterChatCommand("bis", "Toggle")
+    -- Pre-warm module cache early to reduce lag on first slot click
+    if BiSPlanner_ModuleDataWarmCaches then BiSPlanner_ModuleDataWarmCaches() end
 end
 
 function BiSPlanner:OnEnable()

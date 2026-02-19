@@ -20,6 +20,7 @@ function BisEquip_UI_ApplyClickable(frame, expandPx)
         frame:SetHitRectInsets(-expandPx, -expandPx, -expandPx, -expandPx)
     end
 end
+BiSPlanner_UI_ApplyClickable = BisEquip_UI_ApplyClickable
 
 function BisEquip_UI_BringToFront(frame, strata, levelOffset)
     if not frame then return end
@@ -30,6 +31,7 @@ function BisEquip_UI_BringToFront(frame, strata, levelOffset)
         frame:Raise()
     end
 end
+BiSPlanner_UI_BringToFront = BisEquip_UI_BringToFront
 
 function BisEquip_UI_EnableEscapeClose(frame)
     if not frame or not frame.GetName then return end
@@ -46,6 +48,7 @@ function BisEquip_UI_EnableEscapeClose(frame)
         table.insert(UISpecialFrames, name)
     end
 end
+BiSPlanner_UI_EnableEscapeClose = BisEquip_UI_EnableEscapeClose
 
 function BisEquip_UI_FixDropDownLists(buttonHeight)
     local h = buttonHeight or 20
@@ -65,6 +68,7 @@ function BisEquip_UI_FixDropDownLists(buttonHeight)
         end
     end
 end
+BiSPlanner_UI_FixDropDownLists = BisEquip_UI_FixDropDownLists
 
 function BisEquip_UI_InitDropDown(dropdown, width, initializer, menuType)
     if not dropdown then return end
