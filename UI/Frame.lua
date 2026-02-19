@@ -21,6 +21,16 @@ local GEAR_H = (S and S.GEAR_PANEL_HEIGHT) or 420
 local STATS_SCROLL_INSET = 18
 local STATS_SCROLLBAR_RESERVED = 16  -- scrollbar width (14) + padding to stats edge (2)
 
+local function SyncDBs(db, set, name)
+    if BiSPlannerDB then BiSPlannerDB.currentSet = set; BiSPlannerDB.currentSetName = name end
+    if BisEquipDB then BisEquipDB.currentSet = set; BisEquipDB.currentSetName = name end
+end
+
+local function SyncDBsSaveSet(db, name)
+    if BiSPlannerDB then BiSPlannerDB.sets[name] = db.sets[name]; BiSPlannerDB.currentSetName = name end
+    if BisEquipDB then BisEquipDB.sets[name] = db.sets[name]; BisEquipDB.currentSetName = name end
+end
+
 -- Main frame
 local main = CreateFrame("Frame", "BiSPlanner_MainFrame", UIParent)
 BisEquip_MainFrame = main
@@ -42,14 +52,7 @@ if BiSPlanner_ApplyMainBackdrop then
 elseif BisEquip_ApplyMainBackdrop then
     BisEquip_ApplyMainBackdrop(main)
 else
-    main:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        tile = true, tileSize = 8, edgeSize = 1,
-        insets = { left = 1, right = 1, top = 1, bottom = 1 }
-    })
-    main:SetBackdropColor(0.08, 0.08, 0.09, 0.95)
-    main:SetBackdropBorderColor(0.2, 0.2, 0.22, 1)
+    BiSPlanner_ApplyMainBackdropWithFallback(main)
 end
 main:RegisterForDrag("LeftButton")
 main:SetScript("OnDragStart", main.StartMoving)
@@ -279,13 +282,8 @@ local function BiSPlanner_InitClassDropdown()
 end
 
 local function GetEffectiveClassId()
-    local c = FrameGetSelectedClass()
-    if c and c ~= "" then return c end
-    if UnitClass then
-        local _, cls = UnitClass("player")
-        return cls
-    end
-    return nil
+    local fn = BiSPlanner_GetEffectiveClassId or BisEquip_GetEffectiveClassId
+    return fn and fn() or nil
 end
 
 -- Profile dropdown (load set)
@@ -307,8 +305,7 @@ local function InitProfileDropdown()
                 db.currentSet = {}
                 for k, v in pairs(db.sets[name] or {}) do db.currentSet[k] = v end
                 db.currentSetName = name
-                if BiSPlannerDB then BiSPlannerDB.currentSet = db.currentSet; BiSPlannerDB.currentSetName = name end
-                if BisEquipDB then BisEquipDB.currentSet = db.currentSet; BisEquipDB.currentSetName = name end
+                SyncDBs(db, db.currentSet, name)
                 BiSPlanner_RefreshAllSlots()
             end
             UIDropDownMenu_AddButton(info, level)
@@ -535,8 +532,7 @@ function BiSPlanner_LoadSet()
             info.func = function()
                 db.currentSet = CopySet(db.sets[name])
                 db.currentSetName = name
-                if BiSPlannerDB then BiSPlannerDB.currentSet = db.currentSet; BiSPlannerDB.currentSetName = name end
-                if BisEquipDB then BisEquipDB.currentSet = db.currentSet; BisEquipDB.currentSetName = name end
+                SyncDBs(db, db.currentSet, name)
                 BiSPlanner_RefreshAllSlots()
                 BiSPlanner_RefreshCurrentSetNameLabel()
             end
@@ -571,8 +567,7 @@ function BiSPlanner_DeleteSet()
                 db.sets[name] = nil
                 if db.currentSetName == name then
                     db.currentSetName = nil
-                    if BiSPlannerDB then BiSPlannerDB.currentSetName = nil end
-                    if BisEquipDB then BisEquipDB.currentSetName = nil end
+                    SyncDBs(db, db.currentSet, nil)
                     BiSPlanner_RefreshCurrentSetNameLabel()
                 end
             end
@@ -599,8 +594,7 @@ StaticPopupDialogs["BISPLANNERSIRUS_SAVE_SET"] = {
         if name ~= "" and db and db.sets then
             db.sets[name] = CopySet(db.currentSet)
             db.currentSetName = name
-            if BiSPlannerDB then BiSPlannerDB.sets[name] = db.sets[name]; BiSPlannerDB.currentSetName = name end
-            if BisEquipDB then BisEquipDB.sets[name] = db.sets[name]; BisEquipDB.currentSetName = name end
+            SyncDBsSaveSet(db, name)
             BiSPlanner_RefreshCurrentSetNameLabel()
             InitProfileDropdown()
         end
@@ -619,8 +613,7 @@ StaticPopupDialogs["BISPLANNERSIRUS_SAVE_SET"] = {
         if name ~= "" and db and db.sets then
             db.sets[name] = CopySet(db.currentSet)
             db.currentSetName = name
-            if BiSPlannerDB then BiSPlannerDB.sets[name] = db.sets[name]; BiSPlannerDB.currentSetName = name end
-            if BisEquipDB then BisEquipDB.sets[name] = db.sets[name]; BisEquipDB.currentSetName = name end
+            SyncDBsSaveSet(db, name)
             BiSPlanner_RefreshCurrentSetNameLabel()
             InitProfileDropdown()
         end

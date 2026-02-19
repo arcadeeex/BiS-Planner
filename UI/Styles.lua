@@ -49,6 +49,21 @@ local SOLID_TEX = "Interface\\Buttons\\WHITE8x8"
 -- ElvUI-style highlight (gradient, same as ElvUI Dropdown.lua / HandleButtonHighlight)
 local HIGHLIGHT_TEX = [[Interface\QuestFrame\UI-QuestTitleHighlight]]
 
+function BiSPlanner_ApplyPanelBackdropWithFallback(frame)
+    BisEquip_ApplyPanelBackdropWithFallback = BiSPlanner_ApplyPanelBackdropWithFallback
+    if not frame then return end
+    frame:SetBackdrop({
+        bgFile = SOLID_TEX,
+        edgeFile = SOLID_TEX,
+        tile = true,
+        tileSize = 8,
+        edgeSize = 1,
+        insets = { left = 1, right = 1, top = 1, bottom = 1 }
+    })
+    frame:SetBackdropColor(0.12, 0.12, 0.13, 1)
+    frame:SetBackdropBorderColor(0.2, 0.2, 0.22, 1)
+end
+
 function BiSPlanner_ApplyPanelBackdrop(frame, r, g, b, a)
     if not frame then return end
     local c = BiSPlanner_Styles or S
@@ -66,6 +81,21 @@ function BiSPlanner_ApplyPanelBackdrop(frame, r, g, b, a)
     })
     frame:SetBackdropColor(r, g, b, a)
     frame:SetBackdropBorderColor(c.BORDER[1], c.BORDER[2], c.BORDER[3], c.BORDER[4])
+end
+
+function BiSPlanner_ApplyMainBackdropWithFallback(frame)
+    BisEquip_ApplyMainBackdropWithFallback = BiSPlanner_ApplyMainBackdropWithFallback
+    if not frame then return end
+    frame:SetBackdrop({
+        bgFile = SOLID_TEX,
+        edgeFile = SOLID_TEX,
+        tile = true,
+        tileSize = 8,
+        edgeSize = 1,
+        insets = { left = 1, right = 1, top = 1, bottom = 1 }
+    })
+    frame:SetBackdropColor(0.08, 0.08, 0.09, 0.95)
+    frame:SetBackdropBorderColor(0.2, 0.2, 0.22, 1)
 end
 
 function BiSPlanner_ApplyMainBackdrop(frame)

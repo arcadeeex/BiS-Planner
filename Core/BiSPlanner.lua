@@ -66,6 +66,30 @@ function BiSPlanner:GetSlot(slotId)
     return BiSPlannerDB.currentSet and BiSPlannerDB.currentSet[slotId] or nil
 end
 
+function BiSPlanner_GetEffectiveClassId()
+    BisEquip_GetEffectiveClassId = BiSPlanner_GetEffectiveClassId
+    local db = BiSPlannerDB or BisEquipDB
+    if db and db.selectedClass and db.selectedClass ~= "" then return db.selectedClass end
+    if UnitClass then
+        local _, cls = UnitClass("player")
+        return cls
+    end
+    return nil
+end
+
+function BiSPlanner_ResolveAPI(name)
+    BisEquip_ResolveAPI = BiSPlanner_ResolveAPI
+    return _G["BiSPlanner_" .. name] or _G["BisEquip_" .. name]
+end
+
+function BiSPlanner_ResolveSlotQuery(slotId)
+    BisEquip_ResolveSlotQuery = BiSPlanner_ResolveSlotQuery
+    local s = tonumber(slotId)
+    if s == 12 then return 11 end
+    if s == 14 then return 13 end
+    return s
+end
+
 function BiSPlanner:Toggle()
     if BiSPlanner_MainFrame then
         if BiSPlanner_MainFrame:IsShown() then

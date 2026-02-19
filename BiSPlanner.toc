@@ -24,6 +24,7 @@ Data\Modules\Legendary.lua
 Core\BiSPlanner.lua
 Core\ItemData.lua
 Core\ModuleData.lua
+Core\StatLabels.lua
 Core\Stats.lua
 Libraries\UICompat.lua
 UI\Styles.lua

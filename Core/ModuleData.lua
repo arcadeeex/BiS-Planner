@@ -312,12 +312,8 @@ local function BuildModuleCache()
     return out
 end
 
--- Slot 12 (Ring 2) and 14 (Trinket 2) share items with 11 and 13; modules store only 11/13
 local function SlotForLookup(slotId)
-    local s = tonumber(slotId)
-    if s == 12 then return 11 end
-    if s == 14 then return 13 end
-    return s
+    return (BiSPlanner_ResolveSlotQuery or BisEquip_ResolveSlotQuery)(slotId) or slotId
 end
 
 local function BuildNodeForSlot(cache, nodeId, slotId)

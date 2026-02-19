@@ -29,26 +29,7 @@ local OTHER_KEYS = {
     "ITEM_MOD_PARRY_RATING_SHORT", "ITEM_MOD_DEFENSE_SKILL_RATING_SHORT",
 }
 
-local DISPLAY_NAMES = {
-    ["ITEM_MOD_STRENGTH_SHORT"] = "Сила",
-    ["ITEM_MOD_AGILITY_SHORT"] = "Ловкость",
-    ["ITEM_MOD_STAMINA_SHORT"] = "Выносливость",
-    ["ITEM_MOD_INTELLECT_SHORT"] = "Интеллект",
-    ["ITEM_MOD_SPIRIT_SHORT"] = "Дух",
-    ["ITEM_MOD_HIT_RATING_SHORT"] = "Меткость",
-    ["ITEM_MOD_CRIT_RATING_SHORT"] = "Крит",
-    ["ITEM_MOD_HASTE_RATING_SHORT"] = "Скорость",
-    ["ITEM_MOD_EXPERTISE_RATING_SHORT"] = "Мастерство",
-    ["ITEM_MOD_RESILIENCE_RATING_SHORT"] = "Устойчивость",
-    ["ITEM_MOD_ATTACK_POWER_SHORT"] = "Сила атаки",
-    ["ITEM_MOD_RANGED_ATTACK_POWER_SHORT"] = "Сила атаки (дальний бой)",
-    ["ITEM_MOD_SPELL_POWER_SHORT"] = "Сила заклинаний",
-    ["ITEM_MOD_ARMOR_SHORT"] = "Броня",
-    ["ITEM_MOD_BLOCK_RATING_SHORT"] = "Блок",
-    ["ITEM_MOD_DODGE_RATING_SHORT"] = "Уклонение",
-    ["ITEM_MOD_PARRY_RATING_SHORT"] = "Парирование",
-    ["ITEM_MOD_DEFENSE_SKILL_RATING_SHORT"] = "Защита",
-}
+local DISPLAY_NAMES = (BiSPlanner_StatLabels and BiSPlanner_StatLabels.DISPLAY_NAMES) or {}
 -- WotLK 3.3.5: armor pen 1339.6 rating = 100%, so 1% = 13.396
 local RATING_TO_PCT = {
     ["ITEM_MOD_HIT_RATING_SHORT"] = 32.79, ["ITEM_MOD_HIT_MELEE_RATING_SHORT"] = 32.79,
@@ -109,15 +90,10 @@ function BiSPlanner_GetTotalStatsWithBreakdown()
     local byItem = {}
     local set = (BiSPlanner and BiSPlanner:GetCurrentSet()) or (BisEquip and BisEquip:GetCurrentSet())
     if not set then return { total = total, byItem = byItem } end
+    local getStats = BiSPlanner_GetItemStats or BisEquip_GetItemStats
     for slotId, itemId in pairs(set) do
-        if itemId and BiSPlanner_GetItemStats then
-            local st = BiSPlanner_GetItemStats(itemId) or {}
-            byItem[#byItem + 1] = { slotId = slotId, itemId = itemId, stats = st }
-            for k, v in pairs(st) do
-                if type(v) == "number" then total[k] = (total[k] or 0) + v end
-            end
-        elseif itemId and BisEquip_GetItemStats then
-            local st = BisEquip_GetItemStats(itemId) or {}
+        if itemId and getStats then
+            local st = getStats(itemId) or {}
             byItem[#byItem + 1] = { slotId = slotId, itemId = itemId, stats = st }
             for k, v in pairs(st) do
                 if type(v) == "number" then total[k] = (total[k] or 0) + v end
@@ -261,13 +237,8 @@ function BiSPlanner_SetSelectedSpec(specId)
 end
 
 local function GetCurrentClassId()
-    local selected = BiSPlanner_GetSelectedClass()
-    if selected and selected ~= "" then return selected end
-    if UnitClass then
-        local _, cls = UnitClass("player")
-        return cls
-    end
-    return nil
+    local fn = BiSPlanner_GetEffectiveClassId or BisEquip_GetEffectiveClassId
+    return fn and fn() or nil
 end
 
 local function StatValue(total, keys)

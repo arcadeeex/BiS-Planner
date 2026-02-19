@@ -37,12 +37,16 @@ local EQUIP_SLOT_TO_ID = {
 BisEquip_ItemDB = BiSPlanner_ItemDB or BisEquip_ItemDB
 BisEquip_ItemSources = BiSPlanner_ItemSources or BisEquip_ItemSources
 BisEquip_SourceBySlot = BiSPlanner_SourceBySlot or BisEquip_SourceBySlot or nil
-local NormalizeTableId
+local NormalizeSourceId
 local IsLikelySourceMatch
+
+local function PropagateRingTrinketSlots(out)
+    if out[11] and not out[12] then out[12] = out[11] end
+    if out[13] and not out[14] then out[14] = out[13] end
+end
+
 local function ResolveSlotQuery(slotId)
-    if slotId == 12 then return 11 end
-    if slotId == 14 then return 13 end
-    return slotId
+    return (BiSPlanner_ResolveSlotQuery or BisEquip_ResolveSlotQuery)(slotId) or slotId
 end
 
 local function ResolveSlotQueryList(slotId)
@@ -52,9 +56,10 @@ local function ResolveSlotQueryList(slotId)
     return { slotId }
 end
 
-local function NormalizeForSourceFilter(tableId)
-    if not tableId then return "" end
-    return tostring(tableId)
+-- opts: lower, nilToEmpty. NormalizeForSourceFilter = NormalizeSourceId(id, {lower=true, nilToEmpty=true})
+local function NormalizeSourceIdImpl(tableId, opts)
+    if not tableId then return (opts and opts.nilToEmpty) and "" or nil end
+    local s = tostring(tableId)
         :gsub("_[AH]$", "")
         :gsub("25ManHEROIC$", "")
         :gsub("25Man$", "")
@@ -62,7 +67,13 @@ local function NormalizeForSourceFilter(tableId)
         :gsub("_x2$", "")
         :gsub("_x4$", "")
         :gsub("_%d+$", "")
-        :lower()
+    if opts and opts.lower then s = s:lower() end
+    return s
+end
+NormalizeSourceId = NormalizeSourceIdImpl
+
+local function NormalizeForSourceFilter(tableId)
+    return NormalizeSourceIdImpl(tableId, { lower = true, nilToEmpty = true })
 end
 
 local VANILLA_BLOCK_PREFIXES = {
@@ -438,14 +449,8 @@ function BisEquip_GetPvpSeasonForItem(itemId, sourceId)
 end
 
 local function GetEffectiveClassId()
-    local cid = (BiSPlanner_GetSelectedClass and BiSPlanner_GetSelectedClass()) or (BisEquip_GetSelectedClass and BisEquip_GetSelectedClass()) or nil
-    if cid and cid ~= "" then return cid end
-    local unitClass = nil
-    if UnitClass then
-        local _, cls = UnitClass("player")
-        unitClass = cls
-    end
-    return unitClass
+    local fn = BiSPlanner_GetEffectiveClassId or BisEquip_GetEffectiveClassId
+    return fn and fn() or nil
 end
 
 local function LowerSafe(v)
@@ -951,15 +956,14 @@ local function BuildPvpSeasonSlotCache()
         end
         out[slotId] = bySeason
     end
-    if out[11] and not out[12] then out[12] = out[11] end
-    if out[13] and not out[14] then out[14] = out[13] end
+    PropagateRingTrinketSlots(out)
     PVP_SEASON_SLOT_CACHE = out
     return out
 end
 
 function BisEquip_GetPvpSeasonGroupsForSlot(slotId)
     local cache = BuildPvpSeasonSlotCache()
-    return cache[ResolveSlotQuery(slotId)] or {}
+    return cache[(BiSPlanner_ResolveSlotQuery or BisEquip_ResolveSlotQuery)(slotId)] or {}
 end
 
 function BisEquip_ResetPvpSeasonCaches()
@@ -999,8 +1003,7 @@ local function BuildSourceBySlotCache()
         table.sort(list, function(a, b) return a.name < b.name end)
         out[slotId] = list
     end
-    if out[11] and not out[12] then out[12] = out[11] end
-    if out[13] and not out[14] then out[14] = out[13] end
+    PropagateRingTrinketSlots(out)
     BisEquip_SourceBySlot = out
     return out
 end
@@ -1156,19 +1159,9 @@ function BiSPlanner_GetSourceHierarchy(slotId)
   return result
 end
 
--- Нормализовать tableId: убрать суффиксы сложности для сравнения
-NormalizeTableId = function(tableId)
-    if not tableId then return nil end
-    -- Убираем суффиксы сложности/режима, чтобы не дублировать одного босса.
-    local normalized = tableId
-        :gsub("_[AH]$", "")
-        :gsub("25ManHEROIC$", "")
-        :gsub("25Man$", "")
-        :gsub("HEROIC$", "")
-        :gsub("_x2$", "")
-        :gsub("_x4$", "")
-        :gsub("_%d+$", "")
-    return normalized
+-- Нормализовать tableId: убрать суффиксы сложности для сравнения (alias for backward compat)
+local NormalizeTableId = function(tableId)
+    return NormalizeSourceIdImpl(tableId)
 end
 
 local function SplitTokens(s)
