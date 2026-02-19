@@ -15,6 +15,11 @@ local SLOT_SIZE = (S and S.SLOT_SIZE) or 40
 local SLOT_GAP = (S and S.SLOT_GAP) or 8
 local SLOT_CELL = (S and S.SLOT_CELL) or (SLOT_SIZE + SLOT_GAP)
 local SLOT_COLUMN_GAP = (S and S.SLOT_COLUMN_GAP) or 20
+local SOCKET_SIZE = (S and S.SOCKET_SIZE) or 8
+local SOCKET_GAP = (S and S.SOCKET_GAP) or 2
+local SOCKET_ICON_PADDING = (S and S.SOCKET_ICON_PADDING) or 6
+local SOCKET_ROW_HEIGHT = (S and S.SOCKET_ROW_HEIGHT) or 12
+local SOCKET_TEXTURES = (S and S.SOCKET_TEXTURES) or {}
 local GEAR_W = (S and S.GEAR_PANEL_WIDTH) or 260
 local GEAR_H = (S and S.GEAR_PANEL_HEIGHT) or 420
 -- Inset for stats scroll: must fit scrollbar (14px) + padding so it stays inside main window
@@ -504,12 +509,20 @@ function BiSPlanner_InitUI()
     local GEAR_BOTTOM_PAD = 12
     local bottomY = -7 * SLOT_CELL - 24 - GEAR_BOTTOM_PAD
 
+    local function IsLeftCol(sid) for _, v in ipairs(leftCol) do if v == sid then return true end end return false end
+    local function IsRightCol(sid) for _, v in ipairs(rightCol) do if v == sid then return true end end return false end
+    local function IsWeapon(sid) for _, v in ipairs(bottomRow) do if v == sid then return true end end return false end
+
     local function CreateSlotBtn(slotId, x, y)
         local btn = CreateFrame("Button", "BiSPlanner_Slot" .. slotId, gearPanel)
         _G["BisEquip_Slot" .. slotId] = btn
+        local isWeaponSlot = IsWeapon(slotId)
         btn:SetSize(SLOT_SIZE, SLOT_SIZE)
         btn:SetPoint("TOPLEFT", gearPanel, "TOPLEFT", x, y)
         btn.slotId = slotId
+        btn.isWeaponSlot = isWeaponSlot
+        btn.isLeftCol = IsLeftCol(slotId)
+        btn.isRightCol = IsRightCol(slotId)
         local isNonClickable = NON_CLICKABLE_SLOTS[slotId]
         if isNonClickable then
             btn:EnableMouse(false)
@@ -534,6 +547,16 @@ function BiSPlanner_InitUI()
         tex:SetPoint("TOPLEFT", 2, -2)
         tex:SetPoint("BOTTOMRIGHT", -2, 2)
         btn.texture = tex
+        -- Socket icons (max 3): in-game textures from ItemSocketingFrame
+        local socketTexs = {}
+        for i = 1, 3 do
+            local st = btn:CreateTexture(nil, "ARTWORK")
+            st:SetSize(SOCKET_SIZE, SOCKET_SIZE)
+            st:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+            st:Hide()
+            socketTexs[i] = st
+        end
+        btn.socketTexs = socketTexs
         if not isNonClickable then
             btn:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
             btn:SetPushedTexture("Interface\\Buttons\\UI-Quickslot-Depress")
@@ -560,6 +583,33 @@ function BiSPlanner_InitUI()
     end)
 end
 
+local function UpdateSlotSockets(btn, itemId)
+    if not btn or not btn.socketTexs then return end
+    local sockets = itemId and (BiSPlanner_GetItemSockets and BiSPlanner_GetItemSockets(itemId)) or {}
+    local n = #sockets
+    local totalH = n * SOCKET_SIZE + math.max(0, n - 1) * SOCKET_GAP
+    local firstY = math.floor(-(SLOT_SIZE / 2 - totalH / 2))
+    for i, st in ipairs(btn.socketTexs) do
+        if i <= n then
+            local texPath = SOCKET_TEXTURES[sockets[i]] or SOCKET_TEXTURES["EMPTY_SOCKET_YELLOW"] or "Interface\\Icons\\INV_Misc_Gem_01"
+            st:SetTexture(texPath)
+            st:Show()
+            st:ClearAllPoints()
+            local pad = math.floor(SOCKET_ICON_PADDING + SOCKET_SIZE / 2)
+            if btn.isLeftCol then
+                st:SetPoint("TOP", btn, "TOPRIGHT", pad, firstY - (i - 1) * (SOCKET_SIZE + SOCKET_GAP))
+            elseif btn.isRightCol then
+                st:SetPoint("TOP", btn, "TOPLEFT", -pad, firstY - (i - 1) * (SOCKET_SIZE + SOCKET_GAP))
+            elseif btn.isWeaponSlot then
+                local off = math.floor((2 * i - 1 - n) * (SOCKET_SIZE + SOCKET_GAP) / 2)
+                st:SetPoint("TOP", btn, "BOTTOM", off, -SOCKET_ICON_PADDING)
+            end
+        else
+            st:Hide()
+        end
+    end
+end
+
 function BiSPlanner_UpdateSlot(slotId)
     BisEquip_UpdateSlot = BiSPlanner_UpdateSlot
     local btn = _G["BiSPlanner_Slot" .. slotId] or _G["BisEquip_Slot" .. slotId]
@@ -582,6 +632,7 @@ function BiSPlanner_UpdateSlot(slotId)
             btn.texture:SetTexture(0.12, 0.12, 0.12, 1)
         end
     end
+    UpdateSlotSockets(btn, itemId)
     -- RefreshStats called once by RefreshAllSlots; avoid N redundant calls from UpdateSlot
 end
 

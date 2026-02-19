@@ -28,14 +28,34 @@ S.SLOT_GAP        = 8
 S.SLOT_CELL       = S.SLOT_SIZE + S.SLOT_GAP  -- 48
 S.SLOT_COLUMN_GAP = 28  -- space between left and right columns (ElvUI-like)
 
--- Main window (reduced width, height fits equipment + stats)
+-- Socket icons: in-game textures from ItemSocketingFrame (WotLK)
+-- If textures show green, set SOCKET_TEXTURES = S.SOCKET_TEXTURES_FALLBACK
+S.SOCKET_SIZE       = 12
+S.SOCKET_GAP        = 2
+S.SOCKET_ICON_PADDING = 6
+S.SOCKET_ROW_HEIGHT = 12
+S.SOCKET_TEXTURES   = {
+    ["EMPTY_SOCKET_RED"]    = "Interface\\ItemSocketingFrame\\UI-EmptySocket-Red",
+    ["EMPTY_SOCKET_BLUE"]   = "Interface\\ItemSocketingFrame\\UI-EmptySocket-Blue",
+    ["EMPTY_SOCKET_YELLOW"] = "Interface\\ItemSocketingFrame\\UI-EmptySocket-Yellow",
+    ["EMPTY_SOCKET_META"]   = "Interface\\ItemSocketingFrame\\UI-EmptySocket-Meta",
+}
+-- Fallback if ItemSocketingFrame missing (gem icons from Interface\Icons)
+S.SOCKET_TEXTURES_FALLBACK = {
+    ["EMPTY_SOCKET_RED"]    = "Interface\\Icons\\INV_Misc_Gem_01",
+    ["EMPTY_SOCKET_BLUE"]   = "Interface\\Icons\\INV_Misc_Gem_02",
+    ["EMPTY_SOCKET_YELLOW"] = "Interface\\Icons\\INV_Misc_Gem_03",
+    ["EMPTY_SOCKET_META"]   = "Interface\\Icons\\INV_Misc_Gem_Meta_01",
+}
+
+-- Main window (reduced width, height fits equipment + stats + socket row at bottom)
 S.MAIN_WIDTH      = 560
-S.MAIN_HEIGHT     = 600
+S.MAIN_HEIGHT     = 600 + (S.SOCKET_ROW_HEIGHT or 12)
 S.HEADER_HEIGHT   = 48
 S.TOPBAR_HEIGHT   = 36
 S.BOTTOMBAR_HEIGHT = 40
 
--- Gear panel (height includes bottom padding)
+-- Gear panel (height from content area, not fixed)
 S.GEAR_PANEL_WIDTH  = 260
 S.GEAR_PANEL_HEIGHT = 420
 

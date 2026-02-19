@@ -1670,6 +1670,58 @@ function BiSPlanner_GetItemStats(itemId)
     return {}
 end
 
+-- Returns ordered list of socket types in item order (from tooltip), e.g. {"EMPTY_SOCKET_RED", "EMPTY_SOCKET_BLUE"}
+-- Meta first (top), then Yellow, Red, Blue — как в предмете (шлем: мета сверху)
+local SOCKET_ORDER = { ["EMPTY_SOCKET_META"] = 1, ["EMPTY_SOCKET_YELLOW"] = 2, ["EMPTY_SOCKET_RED"] = 3, ["EMPTY_SOCKET_BLUE"] = 4 }
+local SOCKET_PATTERNS = {
+    { key = "EMPTY_SOCKET_META",   ru = "мета гнездо",   en = "meta socket" },
+    { key = "EMPTY_SOCKET_RED",    ru = "красное гнездо", en = "red socket" },
+    { key = "EMPTY_SOCKET_BLUE",   ru = "синее гнездо",  en = "blue socket" },
+    { key = "EMPTY_SOCKET_YELLOW", ru = "желтое гнездо", en = "yellow socket" },
+}
+
+local function ParseSocketsFromTooltip(itemId)
+    if not itemId or not ScanTooltip then return nil end
+    ScanTooltip:ClearLines()
+    ScanTooltip:SetHyperlink("item:" .. itemId .. ":0:0:0:0:0:0:0")
+    ScanTooltip:Show()
+    local name = ScanTooltip:GetName() or ScanTooltipName or "BisEquipScanTooltip"
+    local numLines = (ScanTooltip.NumLines and ScanTooltip:NumLines()) or 0
+    local list = {}
+    for i = 1, math.max(numLines, 20) do
+        local left = _G[name .. "TextLeft" .. i] or _G[ScanTooltipName .. "TextLeft" .. i]
+        if not left then break end
+        local text = NormalizeTooltipText(left:GetText() or "")
+        local lower = text:lower()
+        for _, p in ipairs(SOCKET_PATTERNS) do
+            if lower:find(p.ru:lower(), 1, true) or lower:find(p.en, 1, true) then
+                list[#list + 1] = p.key
+                break
+            end
+        end
+    end
+    ScanTooltip:Hide()
+    return #list > 0 and list or nil
+end
+
+function BiSPlanner_GetItemSockets(itemId)
+    if not itemId then return {} end
+    local list = ParseSocketsFromTooltip(itemId)
+    if list then return list end
+    local getStats = BiSPlanner_GetItemStats or BisEquip_GetItemStats
+    if not getStats then return {} end
+    local st = getStats(itemId) or {}
+    list = {}
+    for k, v in pairs(st) do
+        if k:find("EMPTY_SOCKET") and type(v) == "number" and v > 0 then
+            for _ = 1, v do list[#list + 1] = k end
+        end
+    end
+    table.sort(list, function(a, b) return (SOCKET_ORDER[a] or 5) < (SOCKET_ORDER[b] or 5) end)
+    return list
+end
+BisEquip_GetItemSockets = BiSPlanner_GetItemSockets
+
 -- Manual one-shot armor debug for a specific item (used from slot hover).
 -- When source=slot:N: GameTooltip is ALREADY showing the item - parse it directly.
 -- Otherwise use ScanArmorWithGameTooltip.
