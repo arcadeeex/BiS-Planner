@@ -269,6 +269,26 @@ local function FormatRating(v, perPct)
     return string.format("%d (%.2f%%)", rating, pct)
 end
 
+local function FormatRatingWithBonusPct(v, perPct, bonusPct)
+    if not perPct or perPct <= 0 then return FormatNumberValue(v) end
+    local rating = math.floor((v or 0) + 0.5)
+    local basePct = (v or 0) / perPct
+    bonusPct = bonusPct or 0
+    local pct = basePct + bonusPct
+    return string.format("%d (%.2f%%)", rating, pct)
+end
+
+local function FormatHasteRatingWithMultipliers(v, perPct, multA, multB)
+    if not perPct or perPct <= 0 then return FormatNumberValue(v) end
+    local rating = math.floor((v or 0) + 0.5)
+    local basePct = (v or 0) / perPct
+    local m1 = multA or 1
+    local m2 = multB or 1
+    local mult = m1 * m2
+    local pct = (mult == 1) and basePct or ((1 + basePct / 100) * mult - 1) * 100
+    return string.format("%d (%.2f%%)", rating, pct)
+end
+
 local function FormatConvertedValue(v, perUnit)
     if not perUnit or perUnit <= 0 then return FormatNumberValue(v) end
     return string.format("%.2f", (v or 0) / perUnit)
@@ -331,6 +351,15 @@ end
 local WeaponScanTooltip = CreateFrame("GameTooltip", "BiSPlannerWeaponScanTooltip", UIParent, "GameTooltipTemplate")
 BisEquipWeaponScanTooltip = WeaponScanTooltip -- Backward compatibility
 WeaponScanTooltip:SetOwner(UIParent, "ANCHOR_NONE")
+-- Ensure font strings exist (some clients need this for custom tooltips)
+local function EnsureWeaponTooltipFontStrings()
+    local name = WeaponScanTooltip:GetName() or "BiSPlannerWeaponScanTooltip"
+    if _G[name .. "TextLeft1"] then return end
+    local left = WeaponScanTooltip:CreateFontString(name .. "TextLeft1", nil, "GameTooltipText")
+    local right = WeaponScanTooltip:CreateFontString(name .. "TextRight1", nil, "GameTooltipText")
+    WeaponScanTooltip:AddFontStrings(left, right)
+end
+EnsureWeaponTooltipFontStrings()
 
 local function NormalizeTooltipLine(s)
     if not s then return "" end
@@ -345,15 +374,35 @@ local function ParseWeaponTooltipLine(line)
     if not line or line == "" then return nil, nil, nil end
     local s = NormalizeTooltipLine(line)
 
-    local d1, d2 = s:match("(%d+)%s*[%-%–—]%s*(%d+)")
-    if d1 and d2 then
+    local function validDamage(a, b)
+        a, b = tonumber(a), tonumber(b)
+        if not a or not b then return false end
+        return b > a and a > 10 and b < 500000
+    end
+
+    -- Damage: "Урон: 670 - 1005" — извлекаем все числа и ищем пару min-max (обходим баг с захватом в Lua/UTF-8)
+    local d1, d2
+    if s:find("[Уу]рон") or s:find("[Dd]amage") then
+        local nums = {}
+        for n in s:gmatch("(%d+)") do nums[#nums + 1] = tonumber(n) end
+        for i = 1, math.max(0, #nums - 1) do
+            if validDamage(nums[i], nums[i + 1]) then d1, d2 = nums[i], nums[i + 1]; break end
+        end
+    end
+    if not d1 or not d2 then
+        d1, d2 = s:match("[УуDd]рон[^%d]*(%d+)[^%d]+(%d+)")
+            or s:match("[Dd]amage[^%d]*(%d+)[^%d]+(%d+)")
+            or s:match("(%d+)%s*[-–—]%s*(%d+)")
+            or s:match("(%d+)[^%d]+(%d+)")
+    end
+    if d1 and d2 and validDamage(d1, d2) then
         return tonumber(d1), tonumber(d2), nil
     end
 
-    -- Handles formats like:
-    -- "Скорость атаки (сек.): 3.29", "Скорость: 3.29", "Speed 3.29"
-    local speed = s:match("[Сс]корость.-([%d%.]+)%s*$")
-        or s:match("[Ss]peed.-([%d%.]+)%s*$")
+    -- Speed: "Скорость 3.60", "Скорость атаки (сек.): 3.29", "Speed 3.29"
+    local speed = s:match("[Сс]корость[^%d]*(%d+%.?%d*)")
+        or s:match("[Ss]peed[^%d]*(%d+%.?%d*)")
+        or s:match("[Сс]корость.-([%d%.]+)%s*$")
         or s:match("([%d%.]+)%s*[Сс]ек")
     if speed then
         return nil, nil, tonumber(speed)
@@ -362,44 +411,69 @@ local function ParseWeaponTooltipLine(line)
     return nil, nil, nil
 end
 
+-- Read tooltip lines (supports named font strings + GetRegions fallback for custom clients)
+local function GetTooltipLines(tt)
+    local lines = {}
+    local name = tt and tt:GetName()
+    for i = 1, 40 do
+        local left = name and _G[name .. "TextLeft" .. i]
+        local l = left and left:GetText()
+        if l and l ~= "" then lines[#lines + 1] = l end
+        local right = name and _G[name .. "TextRight" .. i]
+        local r = right and right:GetText()
+        if r and r ~= "" then lines[#lines + 1] = r end
+    end
+    if #lines == 0 and tt and tt.GetRegions then
+        for i = 1, select("#", tt:GetRegions()) do
+            local r = select(i, tt:GetRegions())
+            if r and r.GetObjectType and r:GetObjectType() == "FontString" then
+                local t = r:GetText()
+                if t and t ~= "" then lines[#lines + 1] = t end
+            end
+        end
+    end
+    return lines
+end
+
 local function GetMeleeWeaponDisplay(meleeAP)
     local itemId = (BiSPlanner and BiSPlanner.GetSlot and BiSPlanner:GetSlot(16)) or (BisEquip and BisEquip.GetSlot and BisEquip:GetSlot(16)) or nil
     if not itemId then return "—", "—" end
 
     local minDmg, maxDmg, speed
+    local link = "item:" .. itemId .. ":0:0:0:0:0:0:0"
 
-    local function ScanOnce()
-        WeaponScanTooltip:ClearLines()
-        WeaponScanTooltip:SetHyperlink("item:" .. itemId .. ":0:0:0:0:0:0:0")
-        WeaponScanTooltip:Show()
-        WeaponScanTooltip:Hide()
-
-        for i = 1, 40 do
-            local left = _G["BiSPlannerWeaponScanTooltipTextLeft" .. i] or _G["BisEquipWeaponScanTooltipTextLeft" .. i]
-            local right = _G["BiSPlannerWeaponScanTooltipTextRight" .. i] or _G["BisEquipWeaponScanTooltipTextRight" .. i]
-            local lines = {
-                left and left:GetText() or nil,
-                right and right:GetText() or nil,
-            }
-            for _, line in ipairs(lines) do
-                if line and line ~= "" then
-                    local a, b, s = ParseWeaponTooltipLine(line)
-                    if a and b and not minDmg then
-                        minDmg = a
-                        maxDmg = b
-                    end
-                    if s and not speed then
-                        speed = s
-                    end
-                end
-            end
+    local function ScanTooltip(tt)
+        tt:ClearLines()
+        tt:SetHyperlink(link)
+        tt:Show()
+        local lines = GetTooltipLines(tt)
+        tt:Hide()
+        for _, line in ipairs(lines) do
+            local a, b, s = ParseWeaponTooltipLine(line)
+            if a and b and not minDmg then minDmg, maxDmg = a, b end
+            if s and not speed then speed = s end
         end
     end
 
-    -- First scan might miss uncached tooltip text; retry once.
-    ScanOnce()
+    ScanTooltip(WeaponScanTooltip)
     if not speed or not minDmg or not maxDmg then
-        ScanOnce()
+        ScanTooltip(WeaponScanTooltip)
+    end
+    -- Fallback: GameTooltip заполняется надёжнее (WeaponScanTooltip может быть пуст)
+    if (not speed or not minDmg or not maxDmg) and GameTooltip then
+        local prevOwner = GameTooltip:GetOwner()
+        GameTooltip:ClearLines()
+        GameTooltip:SetOwner(UIParent, "ANCHOR_NONE")
+        GameTooltip:SetHyperlink(link)
+        GameTooltip:Show()
+        for _, line in ipairs(GetTooltipLines(GameTooltip)) do
+            local a, b, s = ParseWeaponTooltipLine(line)
+            if a and b and not minDmg then minDmg, maxDmg = a, b end
+            if s and not speed then speed = s end
+        end
+        GameTooltip:Hide()
+        GameTooltip:ClearLines()
+        if prevOwner then GameTooltip:SetOwner(prevOwner, "ANCHOR_NONE") end
     end
 
     if not speed then return "—", "—" end
@@ -410,6 +484,37 @@ local function GetMeleeWeaponDisplay(meleeAP)
     local finalMin = math.floor(minDmg + bonus + 0.5)
     local finalMax = math.floor(maxDmg + bonus + 0.5)
     return string.format("%d-%d", finalMin, finalMax), speedText
+end
+
+-- Returns minDmg, maxDmg, speed for a weapon item (for tooltip scan). Used by ItemPicker for damage delta.
+function BiSPlanner_GetWeaponDamage(itemId)
+    if not itemId then return nil, nil, nil end
+    local minDmg, maxDmg, speed
+    local link = "item:" .. itemId .. ":0:0:0:0:0:0:0"
+    local function ScanTooltip(tt)
+        if not tt then return end
+        tt:ClearLines()
+        tt:SetHyperlink(link)
+        tt:Show()
+        for _, line in ipairs(GetTooltipLines(tt)) do
+            local a, b, s = ParseWeaponTooltipLine(line)
+            if a and b and not minDmg then minDmg, maxDmg = a, b end
+            if s and not speed then speed = s end
+        end
+        tt:Hide()
+        tt:ClearLines()
+    end
+    ScanTooltip(WeaponScanTooltip)
+    if (not minDmg or not speed) and GameTooltip then
+        local prevOwner = GameTooltip:GetOwner()
+        GameTooltip:ClearLines()
+        GameTooltip:SetOwner(UIParent, "ANCHOR_NONE")
+        ScanTooltip(GameTooltip)
+        GameTooltip:Hide()
+        GameTooltip:ClearLines()
+        if prevOwner then GameTooltip:SetOwner(prevOwner, "ANCHOR_NONE") end
+    end
+    return minDmg, maxDmg, speed
 end
 
 local function BuildStatsSections(total, classId, baseTotal)
@@ -447,22 +552,62 @@ local function BuildStatsSections(total, classId, baseTotal)
     }
 
     if profile.melee then
+        local rb = total and total.__bisplannerRaidBuffs
+        local physCritBonus = (rb and rb.applyPhys and rb.physCritPct) or 0
+        -- Melee haste: Windfury/Icy Talons (20%) stacks with Swift Ret/Improved Moonkin (3% all types)
+        local meleeHasteMultMajor = 1
+        local meleeHasteMultAll = 1
+        if rb and rb.applyPhys then
+            if rb.meleeHasteMajorPct and rb.meleeHasteMajorPct ~= 0 then
+                meleeHasteMultMajor = 1 + (rb.meleeHasteMajorPct / 100)
+            end
+            if rb.hasteAllTypesPct and rb.hasteAllTypesPct ~= 0 then
+                meleeHasteMultAll = 1 + (rb.hasteAllTypesPct / 100)
+            end
+        end
+
         local meleeAP = GetDerivedAttackPower(classId, total)
         local baseAP = GetDerivedAttackPower(classId, baseTotal)
-        local meleeDmg, meleeSpeed = GetMeleeWeaponDisplay(meleeAP)
+        local meleeDmg, baseSpeedText = GetMeleeWeaponDisplay(meleeAP)
+        local baseSpeed = tonumber(baseSpeedText)
+        local meleeHaste = StatValue(total, { "ITEM_MOD_HASTE_RATING_SHORT", "ITEM_MOD_HASTE_MELEE_RATING_SHORT" })
+        local meleeHasteMult = meleeHasteMultMajor * meleeHasteMultAll
+        local hasteRatingMult = 1 + (meleeHaste or 0) / 32.79 / 100
+        local attackSpeed = "—"
+        if baseSpeed and baseSpeed > 0 then
+            attackSpeed = string.format("%.2f", baseSpeed / (hasteRatingMult * meleeHasteMult))
+        end
         local meleeHit = StatValue(total, { "ITEM_MOD_HIT_RATING_SHORT", "ITEM_MOD_HIT_MELEE_RATING_SHORT" })
         local meleeCrit = StatValue(total, { "ITEM_MOD_CRIT_RATING_SHORT", "ITEM_MOD_CRIT_MELEE_RATING_SHORT" })
-        local meleeHaste = StatValue(total, { "ITEM_MOD_HASTE_RATING_SHORT", "ITEM_MOD_HASTE_MELEE_RATING_SHORT" })
         local expertise = total["ITEM_MOD_EXPERTISE_RATING_SHORT"] or 0
         local arp = StatAny(total, { "ITEM_MOD_ARMOR_PENETRATION_RATING_SHORT", "ITEM_MOD_ARMOR_PENETRATION_RATING" })
+        local dmgTooltip
+        if meleeDmg and meleeDmg ~= "—" then
+            dmgTooltip = { "Скорость атаки (сек.): " .. (attackSpeed or "—"), "Урон: " .. meleeDmg }
+            local minD, maxD = meleeDmg:match("(%d+)%s*%-%s*(%d+)")
+            local aspd = attackSpeed and tonumber(attackSpeed)
+            if minD and maxD and aspd and aspd > 0 then
+                local avg = (tonumber(minD) + tonumber(maxD)) / 2
+                dmgTooltip[3] = "Урон в секунду: " .. string.format("%.1f", avg / aspd)
+            end
+        end
+        local speedTooltip = (attackSpeed and attackSpeed ~= "—") and {
+            "Скорость атаки (сек.): " .. attackSpeed,
+            (baseSpeed and baseSpeed > 0) and ("Базовая скорость оружия: " .. string.format("%.2f", baseSpeed)) or nil,
+        } or nil
+        if speedTooltip then
+            for i = #speedTooltip, 1, -1 do
+                if not speedTooltip[i] then table.remove(speedTooltip, i) end
+            end
+        end
         sections[#sections + 1] = {
             title = "Ближний бой",
             rows = {
-                { "Урон", meleeDmg, nil },
-                { "Скорость", meleeSpeed, nil },
+                { "Урон", meleeDmg, nil, dmgTooltip },
+                { "Скорость атак", attackSpeed, nil, speedTooltip },
                 { "Сила атаки", FormatNumberValue(meleeAP), meleeAP - baseAP },
                 { "Меткость", FormatRating(meleeHit, 32.79), nil },
-                { "Крит", FormatRating(meleeCrit, 45.91), nil },
+                { "Крит", FormatRatingWithBonusPct(meleeCrit, 45.91, physCritBonus), nil },
                 { "Скорость", FormatRating(meleeHaste, 32.79), nil },
                 { "Мастерство", FormatConvertedValue(expertise, EXPERTISE_RATING_PER_MASTERY), nil },
                 { "Пробивание брони", FormatRating(arp, 13.99), nil },
@@ -471,6 +616,18 @@ local function BuildStatsSections(total, classId, baseTotal)
     end
 
     if profile.ranged then
+        local rb = total and total.__bisplannerRaidBuffs
+        local physCritBonusRanged = (rb and rb.applyPhys and rb.physCritPct) or 0
+        local rangedHasteMultMajor = 1
+        local rangedHasteMultAll = 1
+        if rb and rb.applyPhys then
+            if rb.meleeHasteMajorPct and rb.meleeHasteMajorPct ~= 0 then
+                rangedHasteMultMajor = 1 + (rb.meleeHasteMajorPct / 100)
+            end
+            if rb.hasteAllTypesPct and rb.hasteAllTypesPct ~= 0 then
+                rangedHasteMultAll = 1 + (rb.hasteAllTypesPct / 100)
+            end
+        end
         local rangedHit = StatValue(total, { "ITEM_MOD_HIT_RATING_SHORT", "ITEM_MOD_HIT_RANGED_RATING_SHORT" })
         local rangedCrit = StatValue(total, { "ITEM_MOD_CRIT_RATING_SHORT", "ITEM_MOD_CRIT_RANGED_RATING_SHORT" })
         local rangedHaste = StatValue(total, { "ITEM_MOD_HASTE_RATING_SHORT", "ITEM_MOD_HASTE_RANGED_RATING_SHORT" })
@@ -482,13 +639,28 @@ local function BuildStatsSections(total, classId, baseTotal)
                 { "Скорость", "—", nil },
                 { "Сила атаки", FormatNumberValue(rangedAP), nil },
                 { "Меткость", FormatRating(rangedHit, 32.79), nil },
-                { "Крит", FormatRating(rangedCrit, 45.91), nil },
-                { "Скорость", FormatRating(rangedHaste, 32.79), nil },
+                { "Крит", FormatRatingWithBonusPct(rangedCrit, 45.91, physCritBonusRanged), nil },
+                { "Скорость", FormatHasteRatingWithMultipliers(rangedHaste, 32.79, rangedHasteMultMajor, rangedHasteMultAll), nil },
             }
         }
     end
 
     if profile.magic then
+        local rb = total and total.__bisplannerRaidBuffs
+        local spellHitBonus = (rb and rb.applySpell and rb.spellHitPct) or 0
+        local spellCritBonus = (rb and rb.applySpell and rb.spellCritPct) or 0
+        -- Spell haste: Wrath of Air (5%) stacks with Swift Ret/Improved Moonkin (3% all types)
+        local spellHasteMultTotem = 1
+        local spellHasteMultAll = 1
+        if rb and rb.applySpell then
+            if rb.spellHastePct and rb.spellHastePct ~= 0 then
+                spellHasteMultTotem = 1 + (rb.spellHastePct / 100)
+            end
+            if rb.hasteAllTypesPct and rb.hasteAllTypesPct ~= 0 then
+                spellHasteMultAll = 1 + (rb.hasteAllTypesPct / 100)
+            end
+        end
+
         local spellHit = StatValue(total, { "ITEM_MOD_HIT_RATING_SHORT", "ITEM_MOD_HIT_SPELL_RATING_SHORT" })
         local spellCrit = StatValue(total, { "ITEM_MOD_CRIT_RATING_SHORT", "ITEM_MOD_CRIT_SPELL_RATING_SHORT" })
         local spellHaste = StatValue(total, { "ITEM_MOD_HASTE_RATING_SHORT", "ITEM_MOD_HASTE_SPELL_RATING_SHORT" })
@@ -500,9 +672,9 @@ local function BuildStatsSections(total, classId, baseTotal)
             rows = {
                 { "Доп. урон", FormatNumberValue(spellPower), nil },
                 { "Доп. лечение", FormatNumberValue(spellPower), nil },
-                { "Меткость", FormatRating(spellHit, 26.23), nil },
-                { "Крит", FormatRating(spellCrit, 45.91), nil },
-                { "Скорость", FormatRating(spellHaste, 32.79), nil },
+                { "Меткость", FormatRatingWithBonusPct(spellHit, 26.23, spellHitBonus), nil },
+                { "Крит", FormatRatingWithBonusPct(spellCrit, 45.91, spellCritBonus), nil },
+                { "Скорость", FormatHasteRatingWithMultipliers(spellHaste, 32.79, spellHasteMultTotem, spellHasteMultAll), nil },
                 { "Пенетра", FormatNumberValue(spellPen), nil },
                 { "Крит от интеллекта", FormatIntCritBonus(classId, intellect), nil },
                 { "Дух", FormatNumberValue(total["ITEM_MOD_SPIRIT_SHORT"]), nil },
@@ -549,6 +721,15 @@ function BiSPlanner_RefreshStatsImpl()
 
     local total = BiSPlanner_GetTotalStats()
     local classId = GetCurrentClassId()
+    local db = BiSPlannerDB or BisEquipDB
+    local raidBuffs = (db and db.raidBuffs) or false
+    local check = _G["BiSPlanner_RaidBuffsCheck"] or _G["BisEquip_RaidBuffsCheck"]
+    if check and check.GetChecked and check:GetChecked() then
+        raidBuffs = true
+    end
+    if raidBuffs and BiSPlanner_ApplyRaidBuffs then
+        total = BiSPlanner_ApplyRaidBuffs(total, classId)
+    end
     local sections = BuildStatsSections(total, classId, nil)
 
     local scroll = BiSPlanner_StatsScroll or BisEquip_StatsScroll
@@ -579,7 +760,7 @@ function BiSPlanner_RefreshStatsImpl()
         card:SetPoint("RIGHT", container, "RIGHT", 0, 0)
         card:SetHeight(CARD_HEADER + 2)
         card.header:SetText(section.title)
-        card.header:SetPoint("TOPLEFT", 8, -6)
+        card.header:SetPoint("TOPLEFT", 4, -6)
         card.collapseIcon:SetPoint("LEFT", card.header, "RIGHT", 4, 0)
         card.collapseIcon:SetText(collapsed and "+" or "-")
         card.header:GetParent():SetScript("OnMouseUp", nil)
@@ -626,14 +807,15 @@ function BiSPlanner_RefreshStatsImpl()
                     row.hit:SetScript("OnLeave", function() GameTooltip:Hide() end)
                     card.rows[i] = row
                 end
-                local valueW = 68
-                local valueRightInset = 10
+                local valueW = 92
+                local valueRightInset = 6
                 local gapBetweenLabelAndValue = 6
-                local rowInnerWidth = math.max(120, containerWidth - 16)
+                local rowPaddingH = 4
+                local rowInnerWidth = math.max(120, containerWidth - rowPaddingH * 2)
                 local labelW = math.max(60, rowInnerWidth - valueW - valueRightInset - gapBetweenLabelAndValue)
                 row.frame:ClearAllPoints()
-                row.frame:SetPoint("TOPLEFT", card, "TOPLEFT", 8, rowY)
-                row.frame:SetPoint("RIGHT", card, "RIGHT", -8, 0)
+                row.frame:SetPoint("TOPLEFT", card, "TOPLEFT", rowPaddingH, rowY)
+                row.frame:SetPoint("RIGHT", card, "RIGHT", -rowPaddingH, 0)
                 row.frame:SetHeight(ROW_HEIGHT)
                 row.frame:Show()
                 row.label:SetPoint("LEFT", 0, 0)

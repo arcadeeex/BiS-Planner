@@ -503,11 +503,9 @@ local function IsItemAllowedForSlot(slotId, itemId)
         if equipSlot == "INVTYPE_WEAPONOFFHAND" or equipSlot == "INVTYPE_SHIELD" or equipSlot == "INVTYPE_HOLDABLE" then
             return true
         end
-        if equipSlot == "INVTYPE_WEAPON" then
+        -- Оружие в левую руку: одноручное (WEAPON/WEAPONMAINHAND) и двуручное. Решение о надевании — за пользователем.
+        if equipSlot == "INVTYPE_WEAPON" or equipSlot == "INVTYPE_WEAPONMAINHAND" or equipSlot == "INVTYPE_2HWEAPON" then
             return true
-        end
-        if equipSlot == "INVTYPE_2HWEAPON" then
-            return classId == "WARRIOR"
         end
         return false
     end
@@ -544,6 +542,8 @@ local function IsItemAllowedForSlot(slotId, itemId)
 
     return true
 end
+BiSPlanner_IsItemAllowedForSlot = IsItemAllowedForSlot
+BisEquip_IsItemAllowedForSlot = IsItemAllowedForSlot
 
 local KNOWN_SOURCE_NAME_BY_ID = {
     -- Trial of the Crusader

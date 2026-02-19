@@ -37,8 +37,9 @@ function BisEquip_UI_EnableEscapeClose(frame)
     if not frame or not frame.GetName then return end
     local name = frame:GetName()
     if not name then return end
+    UISpecialFrames = UISpecialFrames or {}
     local exists = false
-    for _, n in ipairs(UISpecialFrames or {}) do
+    for _, n in ipairs(UISpecialFrames) do
         if n == name then
             exists = true
             break

@@ -6,9 +6,9 @@ Structure: HeaderFrame, TopBarFrame, ContentFrame (GearPanel + StatsPanel), Bott
 local S = BiSPlanner_Styles or {}
 local PAD = (S and S.PADDING_OUTER) or 12
 local PAD_BLOCK = (S and S.PADDING_BLOCK) or 8
-local MAIN_W = (S and S.MAIN_WIDTH) or 900
-local MAIN_H = (S and S.MAIN_HEIGHT) or 560
-local HEADER_H = (S and S.HEADER_HEIGHT) or 32
+local MAIN_W = (S and S.MAIN_WIDTH) or 560
+local MAIN_H = (S and S.MAIN_HEIGHT) or 600
+local HEADER_H = (S and S.HEADER_HEIGHT) or 44
 local TOPBAR_H = (S and S.TOPBAR_HEIGHT) or 36
 local BOTTOMBAR_H = (S and S.BOTTOMBAR_HEIGHT) or 40
 local SLOT_SIZE = (S and S.SLOT_SIZE) or 40
@@ -18,8 +18,8 @@ local SLOT_COLUMN_GAP = (S and S.SLOT_COLUMN_GAP) or 20
 local GEAR_W = (S and S.GEAR_PANEL_WIDTH) or 260
 local GEAR_H = (S and S.GEAR_PANEL_HEIGHT) or 420
 -- Inset for stats scroll: must fit scrollbar (14px) + padding so it stays inside main window
-local STATS_SCROLL_INSET = 18
-local STATS_SCROLLBAR_RESERVED = 16  -- scrollbar width (14) + padding to stats edge (2)
+local STATS_SCROLL_INSET = (S and S.STATS_SCROLL_INSET) or 18
+local STATS_SCROLLBAR_RESERVED = (S and S.STATS_SCROLLBAR_RESERVED) or 16
 
 local function SyncDBs(db, set, name)
     if BiSPlannerDB then BiSPlannerDB.currentSet = set; BiSPlannerDB.currentSetName = name end
@@ -29,6 +29,15 @@ end
 local function SyncDBsSaveSet(db, name)
     if BiSPlannerDB then BiSPlannerDB.sets[name] = db.sets[name]; BiSPlannerDB.currentSetName = name end
     if BisEquipDB then BisEquipDB.sets[name] = db.sets[name]; BisEquipDB.currentSetName = name end
+end
+
+local function SyncRaidBuffsCheck()
+    local check = _G["BiSPlanner_RaidBuffsCheck"]
+    if check then
+        local db = BiSPlannerDB or BisEquipDB
+        check:SetChecked(db and db.raidBuffs)
+        if check.UpdateAppearance then check:UpdateAppearance() end
+    end
 end
 
 -- Main frame
@@ -60,6 +69,8 @@ main:SetScript("OnDragStop", main.StopMovingOrSizing)
 main:SetScript("OnHide", function()
     local picker = BiSPlanner_ItemPickerFrame or BisEquip_ItemPickerFrame
     if picker and picker:IsShown() then picker:Hide() end
+    local sf = BiSPlanner_SettingsFrame or BisEquip_SettingsFrame
+    if sf and sf:IsShown() then sf:Hide() end
 end)
 
 -- HeaderFrame (32px): title + close only
@@ -79,24 +90,56 @@ title:SetText("BiS Planner " .. tostring(addonVersion or "1.0"))
 local tc = S.TEXT_VALUE or { 0.9, 0.9, 0.9, 1 }
 title:SetTextColor(tc[1], tc[2], tc[3])
 
--- ElvUI-style close: large gray cross, no background
+-- Close button (right) — ElvUI-style, large gray cross, no background
 local closeBtn = CreateFrame("Button", "BiSPlanner_MainFrameClose", headerFrame)
-closeBtn:SetSize(36, 36)
+closeBtn:SetSize(48, 48)
 closeBtn:SetPoint("TOPRIGHT", 0, 0)
+closeBtn:SetNormalTexture("")
+closeBtn:SetPushedTexture("")
+closeBtn:SetHighlightTexture("")
 local closeX = closeBtn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 closeX:SetPoint("CENTER", 0, 0)
 closeX:SetText("×")
-closeX:SetTextColor(0.55, 0.55, 0.58, 1)
-closeX:SetFont(closeX:GetFont(), 26, "OUTLINE")
+closeX:SetTextColor(unpack(S.BUTTON_MUTED or { 0.55, 0.55, 0.58, 1 }))
+closeX:SetFont(closeX:GetFont(), 32, "OUTLINE")
 closeBtn:SetScript("OnClick", function() BiSPlanner_MainFrame:Hide() end)
 closeBtn:SetScript("OnEnter", function(self)
-    closeX:SetTextColor(0.75, 0.75, 0.78, 1)
+    closeX:SetTextColor(unpack(S.BUTTON_MUTED_HOVER or { 0.75, 0.75, 0.78, 1 }))
 end)
 closeBtn:SetScript("OnLeave", function(self)
-    closeX:SetTextColor(0.55, 0.55, 0.58, 1)
+    closeX:SetTextColor(unpack(S.BUTTON_MUTED or { 0.55, 0.55, 0.58, 1 }))
 end)
-if BiSPlanner_UI_ApplyClickable then BiSPlanner_UI_ApplyClickable(closeBtn, 4)
-elseif BisEquip_UI_ApplyClickable then BisEquip_UI_ApplyClickable(closeBtn, 4) end
+if BiSPlanner_UI_ApplyClickable then BiSPlanner_UI_ApplyClickable(closeBtn, nil)
+elseif BisEquip_UI_ApplyClickable then BisEquip_UI_ApplyClickable(closeBtn, nil) end
+closeBtn:SetHitRectInsets(8, 8, 8, 8)  -- уменьшить область клика
+
+-- Settings button (left of close) — flat, no background, opens settings window
+local settingsBtn = CreateFrame("Button", "BiSPlanner_SettingsBtn", headerFrame)
+settingsBtn:SetSize(48, 48)
+-- Кнопка настроек: привязка к хедеру справа (48 ширина close, -30)
+settingsBtn:SetPoint("TOPRIGHT", headerFrame, "TOPRIGHT", -30, 0)
+settingsBtn:SetNormalTexture("")
+settingsBtn:SetPushedTexture("")
+settingsBtn:SetHighlightTexture("")
+local settingsIcon = settingsBtn:CreateTexture(nil, "OVERLAY")
+settingsIcon:SetSize(22, 22)
+settingsIcon:SetPoint("CENTER", 0, 0)
+settingsIcon:SetTexture("Interface\\AddOns\\BiSPlanner\\Textures\\config")
+settingsIcon:SetTexCoord(0, 1, 0, 1)
+settingsIcon:SetVertexColor(unpack(S.ICON_MUTED or { 0.7, 0.7, 0.72, 1 }))
+settingsBtn:SetScript("OnEnter", function()
+    settingsIcon:SetVertexColor(unpack(S.ICON_MUTED_HOVER or { 0.9, 0.9, 0.92, 1 }))
+    GameTooltip:SetOwner(settingsBtn, "ANCHOR_LEFT")
+    GameTooltip:AddLine("Настройки", 1, 0.82, 0)
+    GameTooltip:Show()
+end)
+settingsBtn:SetScript("OnLeave", function()
+    settingsIcon:SetVertexColor(unpack(S.ICON_MUTED or { 0.7, 0.7, 0.72, 1 }))
+    GameTooltip:Hide()
+end)
+if BiSPlanner_UI_ApplyClickable then BiSPlanner_UI_ApplyClickable(settingsBtn, nil)
+elseif BisEquip_UI_ApplyClickable then BisEquip_UI_ApplyClickable(settingsBtn, nil) end
+settingsBtn:SetHitRectInsets(8, 8, 8, 8)  -- уменьшить область клика
 
 -- TopBarFrame (36px): class dropdown left, profile dropdown right, same row
 local topBarFrame = CreateFrame("Frame", "BiSPlanner_TopBarFrame", main)
@@ -121,6 +164,92 @@ local profileLabel = topBarFrame:CreateFontString(nil, "OVERLAY", "GameFontHighl
 profileLabel:SetPoint("RIGHT", profileDropdown, "LEFT", 8, 0)
 profileLabel:SetText("Профиль:")
 profileLabel:SetTextColor((S.TEXT_NORMAL or { 0.75, 0.75, 0.78, 1 })[1], (S.TEXT_NORMAL or {})[2] or 0.75, (S.TEXT_NORMAL or {})[3] or 0.78)
+
+-- Settings window (popup, opened by gear button)
+local SETTINGS_W = 280
+local SETTINGS_H = 120
+local settingsFrame = CreateFrame("Frame", "BiSPlanner_SettingsFrame", main)
+BisEquip_SettingsFrame = settingsFrame
+settingsFrame:SetSize(SETTINGS_W, SETTINGS_H)
+settingsFrame:SetPoint("TOPRIGHT", main, "TOPLEFT", -8, 0)
+settingsFrame:SetFrameStrata("DIALOG")
+settingsFrame:SetFrameLevel(main:GetFrameLevel() + 20)
+settingsFrame:EnableMouse(true)
+settingsFrame:Hide()
+if BiSPlanner_UI_EnableEscapeClose then
+    BiSPlanner_UI_EnableEscapeClose(settingsFrame)
+elseif BisEquip_UI_EnableEscapeClose then
+    BisEquip_UI_EnableEscapeClose(settingsFrame)
+end
+if BiSPlanner_ApplyMainBackdrop then BiSPlanner_ApplyMainBackdrop(settingsFrame)
+elseif BisEquip_ApplyMainBackdrop then BisEquip_ApplyMainBackdrop(settingsFrame)
+else BiSPlanner_ApplyMainBackdropWithFallback(settingsFrame) end
+local settingsTitle = settingsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+settingsTitle:SetPoint("TOPLEFT", 12, -12)
+settingsTitle:SetText("Настройки")
+settingsTitle:SetFont(settingsTitle:GetFont(), 12, "")
+settingsTitle:SetTextColor((S.TEXT_VALUE or { 0.9, 0.9, 0.9, 1 })[1], (S.TEXT_VALUE or {})[2] or 0.9, (S.TEXT_VALUE or {})[3] or 0.9)
+local raidBuffsCheck
+if BiSPlanner_CreateElvUICheckbox then
+    raidBuffsCheck = BiSPlanner_CreateElvUICheckbox(settingsFrame, "С рейд баффами")
+elseif BisEquip_CreateElvUICheckbox then
+    raidBuffsCheck = BisEquip_CreateElvUICheckbox(settingsFrame, "С рейд баффами")
+else
+    raidBuffsCheck = CreateFrame("CheckButton", "BiSPlanner_RaidBuffsCheck", settingsFrame)
+    raidBuffsCheck:SetSize(18, 18)
+    raidBuffsCheck:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", 12, -40)
+    raidBuffsCheck:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        tile = true, tileSize = 8, edgeSize = 1,
+        insets = { left = 1, right = 1, top = 1, bottom = 1 }
+    })
+    raidBuffsCheck:SetBackdropColor((S.BG_PANEL or {0.12,0.12,0.13,1})[1], (S.BG_PANEL or {})[2] or 0.12, (S.BG_PANEL or {})[3] or 0.13, 1)
+    raidBuffsCheck:SetBackdropBorderColor((S.BORDER or {0.2,0.2,0.22,1})[1], (S.BORDER or {})[2] or 0.2, (S.BORDER or {})[3] or 0.22, 1)
+    raidBuffsCheck:SetNormalTexture("")
+    raidBuffsCheck:SetCheckedTexture("")
+    local fallbackCheck = raidBuffsCheck:CreateTexture(nil, "OVERLAY")
+    fallbackCheck:SetSize(10, 10)
+    fallbackCheck:SetPoint("CENTER", 0, 0)
+    fallbackCheck:SetTexture("Interface\\AddOns\\BiSPlanner\\Textures\\Melli")
+    fallbackCheck:SetTexCoord(0, 1, 0, 1)
+    fallbackCheck:SetVertexColor(1, 0.82, 0, 0.8)
+    raidBuffsCheck.UpdateAppearance = function(self)
+        if self:GetChecked() then fallbackCheck:Show() else fallbackCheck:Hide() end
+        self:SetBackdropColor((S.BG_PANEL or {0.12,0.12,0.13,1})[1], (S.BG_PANEL or {})[2] or 0.12, (S.BG_PANEL or {})[3] or 0.13, 1)
+    end
+    raidBuffsCheck:SetScript("OnShow", raidBuffsCheck.UpdateAppearance)
+    local lbl = settingsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    lbl:SetPoint("LEFT", raidBuffsCheck, "RIGHT", 8, 0)
+    lbl:SetText("С рейд баффами")
+    lbl:SetFont(lbl:GetFont(), 12, "")
+    lbl:SetTextColor((S.TEXT_NORMAL or { 0.75, 0.75, 0.78, 1 })[1], (S.TEXT_NORMAL or {})[2] or 0.75, (S.TEXT_NORMAL or {})[3] or 0.78)
+end
+raidBuffsCheck:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", 12, -40)
+raidBuffsCheck:SetScript("OnClick", function(self)
+    local checked = self:GetChecked()
+    if BiSPlannerDB then BiSPlannerDB.raidBuffs = checked end
+    if BisEquipDB then BisEquipDB.raidBuffs = checked end
+    if raidBuffsCheck.UpdateAppearance then raidBuffsCheck:UpdateAppearance() end
+    if BiSPlanner_RefreshStats then BiSPlanner_RefreshStats()
+    elseif BisEquip_RefreshStats then BisEquip_RefreshStats() end
+end)
+raidBuffsCheck:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:AddLine("С рейд баффами", 1, 0.82, 0)
+    GameTooltip:AddLine("Учитывать рейд-баффы при расчёте статов", 0.9, 0.9, 0.9)
+    GameTooltip:Show()
+end)
+raidBuffsCheck:SetScript("OnLeave", function() GameTooltip:Hide() end)
+_G["BiSPlanner_RaidBuffsCheck"] = raidBuffsCheck
+settingsBtn:SetScript("OnClick", function()
+    if settingsFrame:IsShown() then
+        settingsFrame:Hide()
+    else
+        settingsFrame:Show()
+        SyncRaidBuffsCheck()
+    end
+end)
 
 -- ContentFrame (padding between content and buttons)
 local CONTENT_BOTTOM_PAD = 16
@@ -176,23 +305,19 @@ bottomBarFrame:SetPoint("BOTTOMLEFT", PAD, PAD)
 bottomBarFrame:SetPoint("BOTTOMRIGHT", -PAD, PAD)
 bottomBarFrame:SetHeight(BOTTOMBAR_H)
 
-local saveBtn, loadBtn, deleteBtn
+local saveBtn, deleteBtn
 if BiSPlanner_CreateFlatButton then
     saveBtn = BiSPlanner_CreateFlatButton(bottomBarFrame, 140, 22, "Сохранить")
-    loadBtn = BiSPlanner_CreateFlatButton(bottomBarFrame, 100, 22, "Загрузить")
     deleteBtn = BiSPlanner_CreateFlatButton(bottomBarFrame, 80, 22, "Удалить")
 else
     saveBtn = CreateFrame("Button", "BiSPlanner_SaveSetBtn", bottomBarFrame, "UIPanelButtonTemplate")
-    loadBtn = CreateFrame("Button", "BiSPlanner_LoadSetBtn", bottomBarFrame, "UIPanelButtonTemplate")
     deleteBtn = CreateFrame("Button", "BiSPlanner_DeleteSetBtn", bottomBarFrame, "UIPanelButtonTemplate")
-    saveBtn:SetText("Сохранить"); loadBtn:SetText("Загрузить"); deleteBtn:SetText("Удалить")
+    saveBtn:SetText("Сохранить"); deleteBtn:SetText("Удалить")
 end
 saveBtn:SetSize(140, 22)
 saveBtn:SetPoint("LEFT", 0, 0)
-loadBtn:SetSize(100, 22)
-loadBtn:SetPoint("LEFT", saveBtn, "RIGHT", 8, 0)
 deleteBtn:SetSize(80, 22)
-deleteBtn:SetPoint("LEFT", loadBtn, "RIGHT", 8, 0)
+deleteBtn:SetPoint("LEFT", saveBtn, "RIGHT", 8, 0)
 
 -- Slot textures
 local SLOT_TO_WOW_NAME = {
@@ -363,6 +488,7 @@ function BiSPlanner_InitUI()
     if BiSPlanner_InitClassDropdown then BiSPlanner_InitClassDropdown()
     elseif BisEquip_InitClassDropdown then BisEquip_InitClassDropdown() end
     InitProfileDropdown()
+    SyncRaidBuffsCheck()
     if BiSPlanner_RefreshCurrentSetNameLabel then BiSPlanner_RefreshCurrentSetNameLabel() end
     if BiSPlanner_RefreshStats then BiSPlanner_RefreshStats() elseif BisEquip_RefreshStats then BisEquip_RefreshStats() end
 
@@ -429,9 +555,6 @@ function BiSPlanner_InitUI()
     saveBtn:SetScript("OnClick", function()
         if BiSPlanner_SaveSet then BiSPlanner_SaveSet() elseif BisEquip_SaveSet then BisEquip_SaveSet() end
     end)
-    loadBtn:SetScript("OnClick", function()
-        if BiSPlanner_LoadSet then BiSPlanner_LoadSet() elseif BisEquip_LoadSet then BisEquip_LoadSet() end
-    end)
     deleteBtn:SetScript("OnClick", function()
         if BiSPlanner_DeleteSet then BiSPlanner_DeleteSet() elseif BisEquip_DeleteSet then BisEquip_DeleteSet() end
     end)
@@ -473,9 +596,9 @@ function BiSPlanner_RefreshAllSlots()
 end
 
 main:SetScript("OnShow", function()
-    -- Ensure UI is initialized (fallback if OnEnable ran before frames were ready)
-    if BiSPlanner_InitUI and not _G["BiSPlanner_Slot1"] then
-        BiSPlanner_InitUI()
+    -- Deferred init: run heavy work only on first open (avoids lag when addon is closed)
+    if not _G["BiSPlanner_Slot1"] and BiSPlanner_OnFirstOpen then
+        BiSPlanner_OnFirstOpen()
     end
     BiSPlanner_RefreshAllSlots()
     if InitProfileDropdown then InitProfileDropdown() end
@@ -508,73 +631,16 @@ end
 
 function BiSPlanner_LoadSet()
     BisEquip_LoadSet = BiSPlanner_LoadSet
-    local db = BiSPlannerDB or BisEquipDB
-    if not db or not db.sets then return end
-    local list = {}
-    for name, _ in pairs(db.sets) do list[#list + 1] = name end
-    table.sort(list)
-    if #list == 0 then return end
-    if not BiSPlanner_LoadSetDropDown then
-        BiSPlanner_LoadSetDropDown = CreateFrame("Frame", "BiSPlanner_LoadSetDropDown", UIParent, "UIDropDownMenuTemplate")
-        BisEquip_LoadSetDropDown = BiSPlanner_LoadSetDropDown
-        if BiSPlanner_ApplyDropDownStyle then BiSPlanner_ApplyDropDownStyle(BiSPlanner_LoadSetDropDown) end
-    end
-    if BiSPlanner_UI_BringToFront then BiSPlanner_UI_BringToFront(BiSPlanner_LoadSetDropDown, "FULLSCREEN_DIALOG", 22)
-    elseif BisEquip_UI_BringToFront then BisEquip_UI_BringToFront(BiSPlanner_LoadSetDropDown, "FULLSCREEN_DIALOG", 22) end
-    UIDropDownMenu_Initialize(BiSPlanner_LoadSetDropDown, function(self, level)
-        if BiSPlanner_ScheduleDropDownListStyle then BiSPlanner_ScheduleDropDownListStyle()
-        elseif BisEquip_ScheduleDropDownListStyle then BisEquip_ScheduleDropDownListStyle() end
-        for _, name in ipairs(list) do
-            local info = UIDropDownMenu_CreateInfo()
-            info.text = name
-            info.checked = (db.currentSetName == name)
-            info.isNotRadio = false
-            info.func = function()
-                db.currentSet = CopySet(db.sets[name])
-                db.currentSetName = name
-                SyncDBs(db, db.currentSet, name)
-                BiSPlanner_RefreshAllSlots()
-                BiSPlanner_RefreshCurrentSetNameLabel()
-            end
-            UIDropDownMenu_AddButton(info, level)
-        end
-    end, "MENU")
-    ToggleDropDownMenu(1, nil, BiSPlanner_LoadSetDropDown, "cursor", 0, 0)
+    -- Load is done via profile dropdown; kept for backward compatibility
 end
 
 function BiSPlanner_DeleteSet()
     BisEquip_DeleteSet = BiSPlanner_DeleteSet
     local db = BiSPlannerDB or BisEquipDB
     if not db or not db.sets then return end
-    local list = {}
-    for name, _ in pairs(db.sets) do list[#list + 1] = name end
-    table.sort(list)
-    if #list == 0 then return end
-    if not BiSPlanner_DeleteSetDropDown then
-        BiSPlanner_DeleteSetDropDown = CreateFrame("Frame", "BiSPlanner_DeleteSetDropDown", UIParent, "UIDropDownMenuTemplate")
-        BisEquip_DeleteSetDropDown = BiSPlanner_DeleteSetDropDown
-        if BiSPlanner_ApplyDropDownStyle then BiSPlanner_ApplyDropDownStyle(BiSPlanner_DeleteSetDropDown) end
-    end
-    if BiSPlanner_UI_BringToFront then BiSPlanner_UI_BringToFront(BiSPlanner_DeleteSetDropDown, "FULLSCREEN_DIALOG", 22)
-    elseif BisEquip_UI_BringToFront then BisEquip_UI_BringToFront(BiSPlanner_DeleteSetDropDown, "FULLSCREEN_DIALOG", 22) end
-    UIDropDownMenu_Initialize(BiSPlanner_DeleteSetDropDown, function(self, level)
-        if BiSPlanner_ScheduleDropDownListStyle then BiSPlanner_ScheduleDropDownListStyle()
-        elseif BisEquip_ScheduleDropDownListStyle then BisEquip_ScheduleDropDownListStyle() end
-        for _, name in ipairs(list) do
-            local info = UIDropDownMenu_CreateInfo()
-            info.text = name
-            info.func = function()
-                db.sets[name] = nil
-                if db.currentSetName == name then
-                    db.currentSetName = nil
-                    SyncDBs(db, db.currentSet, nil)
-                    BiSPlanner_RefreshCurrentSetNameLabel()
-                end
-            end
-            UIDropDownMenu_AddButton(info, level)
-        end
-    end, "MENU")
-    ToggleDropDownMenu(1, nil, BiSPlanner_DeleteSetDropDown, "cursor", 0, 0)
+    local name = db.currentSetName
+    if not name or name == "" then return end
+    StaticPopup_Show("BISPLANNERSIRUS_DELETE_SET", name)
 end
 
 local function trim(s)
@@ -621,3 +687,30 @@ StaticPopupDialogs["BISPLANNERSIRUS_SAVE_SET"] = {
     end,
 }
 StaticPopupDialogs["BISEQUIP_SAVE_SET"] = StaticPopupDialogs["BISPLANNERSIRUS_SAVE_SET"]
+
+StaticPopupDialogs["BISPLANNERSIRUS_DELETE_SET"] = {
+    text = "Удалить профиль «%s»?",
+    button1 = "Удалить",
+    button2 = "Отмена",
+    whileDead = true,
+    hideOnEscape = true,
+    OnAccept = function(self, name)
+        local db = BiSPlannerDB or BisEquipDB
+        if db and db.sets and name then
+            db.sets[name] = nil
+            if db.currentSetName == name then
+                db.currentSet = {}
+                db.currentSetName = nil
+                SyncDBs(db, db.currentSet, nil)
+                BiSPlanner_RefreshAllSlots()
+            end
+            BiSPlanner_RefreshCurrentSetNameLabel()
+            InitProfileDropdown()
+        end
+    end,
+    OnShow = function(self)
+        if BiSPlanner_ApplyStaticPopupStyle then BiSPlanner_ApplyStaticPopupStyle(self)
+        elseif BisEquip_ApplyStaticPopupStyle then BisEquip_ApplyStaticPopupStyle(self) end
+    end,
+}
+StaticPopupDialogs["BISEQUIP_DELETE_SET"] = StaticPopupDialogs["BISPLANNERSIRUS_DELETE_SET"]

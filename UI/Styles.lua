@@ -31,7 +31,7 @@ S.SLOT_COLUMN_GAP = 28  -- space between left and right columns (ElvUI-like)
 -- Main window (reduced width, height fits equipment + stats)
 S.MAIN_WIDTH      = 560
 S.MAIN_HEIGHT     = 600
-S.HEADER_HEIGHT   = 32
+S.HEADER_HEIGHT   = 48
 S.TOPBAR_HEIGHT   = 36
 S.BOTTOMBAR_HEIGHT = 40
 
@@ -43,6 +43,24 @@ S.GEAR_PANEL_HEIGHT = 420
 S.PICKER_WIDTH   = 420
 S.PICKER_HEIGHT  = S.MAIN_HEIGHT or 600
 S.ITEM_ROW_HEIGHT = 42
+S.PICKER_SCROLL_INSET = 10
+S.PICKER_ITEM_ROW_COUNT = 80
+S.DROPDOWN_ROW_OFFSET = 16
+S.DROPDOWN_BUTTON_HEIGHT = 20
+
+-- Stats scroll
+S.STATS_SCROLL_INSET = 18
+S.STATS_SCROLLBAR_RESERVED = 16
+
+-- Button/icon colors (header close, settings)
+S.BUTTON_MUTED = { 0.55, 0.55, 0.58, 1 }
+S.BUTTON_MUTED_HOVER = { 0.75, 0.75, 0.78, 1 }
+S.ICON_MUTED = { 0.7, 0.7, 0.72, 1 }
+S.ICON_MUTED_HOVER = { 0.9, 0.9, 0.92, 1 }
+
+-- Row/slot hover
+S.ROW_BG = { 0.12, 0.12, 0.12, 1 }
+S.ROW_BG_HOVER = { 0.16, 0.16, 0.16, 1 }
 
 -- Solid texture for custom backdrops (WoW 3.3.5)
 local SOLID_TEX = "Interface\\Buttons\\WHITE8x8"
@@ -138,6 +156,60 @@ function BiSPlanner_CreateFlatButton(parent, w, h, text)
     btn.SetText = function(self, t) if label then label:SetText(t or "") end end
     btn.GetText = function(self) return label and label:GetText() or "" end
     return btn
+end
+
+-- ElvUI-style checkbox (по образцу ElvUI HandleCheckBox + Ace3)
+-- Melli.tga — плоская галочка. Скопировать из ElvUI\Media\Textures\Melli.tga в BiSPlanner\Textures\
+local CHECK_TEX = "Interface\\AddOns\\BiSPlanner\\Textures\\Melli"
+function BiSPlanner_CreateElvUICheckbox(parent, labelText)
+    BisEquip_CreateElvUICheckbox = BiSPlanner_CreateElvUICheckbox
+    local cb = CreateFrame("CheckButton", nil, parent)
+    cb:SetSize(18, 18)
+    cb:SetBackdrop({
+        bgFile = SOLID_TEX,
+        edgeFile = SOLID_TEX,
+        tile = true, tileSize = 8, edgeSize = 1,
+        insets = { left = 1, right = 1, top = 1, bottom = 1 }
+    })
+    cb:SetNormalTexture("")
+    cb:SetPushedTexture("")
+    cb:SetHighlightTexture("")
+    cb:SetCheckedTexture("")
+    cb:SetDisabledCheckedTexture("")
+    -- Плоская галочка: квадрат, меньше рамки, чтобы были видны контуры
+    local checkTex = cb:CreateTexture(nil, "OVERLAY")
+    checkTex:SetSize(10, 10)
+    checkTex:SetPoint("CENTER", 0, 0)
+    checkTex:SetTexture(CHECK_TEX)
+    checkTex:SetTexCoord(0, 1, 0, 1)
+    checkTex:SetVertexColor(1, 0.82, 0, 0.8)  -- золотистый как в ElvUI
+    cb.checkTex = checkTex
+    local function UpdateAppearance(self)
+        local checked = self:GetChecked()
+        if checkTex then if checked then checkTex:Show() else checkTex:Hide() end end
+        -- Фон не меняем — всегда S.BG_PANEL
+        self:SetBackdropColor(S.BG_PANEL[1], S.BG_PANEL[2], S.BG_PANEL[3], 1)
+        self:SetBackdropBorderColor(S.BORDER[1], S.BORDER[2], S.BORDER[3], S.BORDER[4])
+    end
+    cb:SetScript("OnClick", UpdateAppearance)
+    cb:SetScript("OnShow", UpdateAppearance)
+    UpdateAppearance(cb)
+    cb:SetScript("OnEnter", function(self)
+        if not self:GetChecked() then
+            self:SetBackdropBorderColor(0.45, 0.45, 0.48, 1)
+        end
+    end)
+    cb:SetScript("OnLeave", function(self)
+        UpdateAppearance(self)
+    end)
+    local lbl = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    lbl:SetPoint("LEFT", cb, "RIGHT", 8, 0)
+    lbl:SetText(labelText or "")
+    lbl:SetFont(lbl:GetFont(), 12, "")
+    lbl:SetTextColor(S.TEXT_NORMAL[1], S.TEXT_NORMAL[2], S.TEXT_NORMAL[3])
+    cb.label = lbl
+    cb.UpdateAppearance = UpdateAppearance
+    return cb
 end
 
 -- ElvUI-style flat dropdown (for UIDropDownMenuTemplate)
@@ -351,14 +423,10 @@ local function installDropDownListStyleHook()
         end
         return false
     end
-    if not tryHook() then
-        local f = CreateFrame("Frame")
-        f:SetScript("OnUpdate", function(self)
-            if tryHook() then self:SetScript("OnUpdate", nil) end
-        end)
-    end
+    tryHook()  -- DropDownList2 may exist; if not, hook below will retry when submenu opens
     -- Method 1: Hook ToggleDropDownMenu - runs when any dropdown opens
     hooksecurefunc("ToggleDropDownMenu", function(level, value, dropdown)
+        if level and level > 0 then tryHook() end  -- retry when submenu may have created DropDownList2
         if level and level > 0 then
             local maxLevels = UIDROPDOWNMENU_MAXLEVELS or 3
             local needsReposition = false
@@ -427,7 +495,7 @@ function BiSPlanner_ScheduleDropDownListStyle()
     end
 end
 BisEquip_ScheduleDropDownListStyle = BiSPlanner_ScheduleDropDownListStyle
--- Install as soon as ToggleDropDownMenu exists; retry until DropDownList1 exists
+-- Install when DropDownList1 exists; use ToggleDropDownMenu hook to avoid per-frame polling
 local function tryInstall()
     if not _G.ToggleDropDownMenu then return false end
     if _G.DropDownList1 then
@@ -436,12 +504,13 @@ local function tryInstall()
     end
     return false
 end
-local defer = CreateFrame("Frame")
-defer:SetScript("OnUpdate", function(self)
-    if tryInstall() then
-        self:SetScript("OnUpdate", nil)
-    end
-end)
+if tryInstall() then
+    -- DropDownList1 already exists (e.g. from another addon)
+elseif hooksecurefunc then
+    hooksecurefunc("ToggleDropDownMenu", function()
+        tryInstall()
+    end)
+end
 
 -- ElvUI-style StaticPopup (save set dialog etc.)
 function BiSPlanner_ApplyStaticPopupStyle(popup)

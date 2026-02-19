@@ -15,6 +15,7 @@ local function GetDefaults()
         currentSetName = nil,
         currentSet = {},
         selectedClass = nil, -- e.g. "WARRIOR", "PALADIN"; nil = current player class
+        raidBuffs = false,   -- "С рейд баффами" toggle
         minimap = {
             angle = 220,
             hide = false,
@@ -43,6 +44,9 @@ function BiSPlanner:InitDB()
     end
     if BiSPlannerDB.minimap.hide == nil then
         BiSPlannerDB.minimap.hide = false
+    end
+    if BiSPlannerDB.raidBuffs == nil then
+        BiSPlannerDB.raidBuffs = false
     end
     -- Keep old DBs in sync for backward compatibility
     BisEquipDB = BiSPlannerDB
@@ -88,6 +92,16 @@ function BiSPlanner_ResolveSlotQuery(slotId)
     if s == 12 then return 11 end
     if s == 14 then return 13 end
     return s
+end
+
+-- Список слотов для поиска: слот 17 = {17, 16} (левая рука = оффхенды + всё оружие правой руки)
+function BiSPlanner_ResolveSlotQueryList(slotId)
+    BisEquip_ResolveSlotQueryList = BiSPlanner_ResolveSlotQueryList
+    local s = tonumber(slotId)
+    if s == 12 then return { 11 } end
+    if s == 14 then return { 13 } end
+    if s == 17 then return { 17, 16 } end
+    return { s or slotId }
 end
 
 function BiSPlanner:Toggle()
@@ -185,11 +199,7 @@ local function EnsureMinimapButton()
         end
     end)
 
-    btn:SetScript("OnDragStart", function(self)
-        self.dragging = true
-    end)
-    btn:SetScript("OnDragStop", function(self)
-        self.dragging = false
+    local function onMinimapDragUpdate(self)
         if not BiSPlannerDB or not BiSPlannerDB.minimap then return end
         local mx, my = Minimap:GetCenter()
         local cx, cy = GetCursorPosition()
@@ -201,9 +211,14 @@ local function EnsureMinimapButton()
         local angle = CalcAngle(dy, dx)
         BiSPlannerDB.minimap.angle = angle
         UpdateMinimapButtonPosition(self, angle)
+    end
+    btn:SetScript("OnDragStart", function(self)
+        self.dragging = true
+        self:SetScript("OnUpdate", onMinimapDragUpdate)
     end)
-    btn:SetScript("OnUpdate", function(self)
-        if not self.dragging then return end
+    btn:SetScript("OnDragStop", function(self)
+        self.dragging = false
+        self:SetScript("OnUpdate", nil)
         if not BiSPlannerDB or not BiSPlannerDB.minimap then return end
         local mx, my = Minimap:GetCenter()
         local cx, cy = GetCursorPosition()
@@ -241,19 +256,16 @@ function BiSPlanner:OnInitialize()
     self:InitDB()
     -- Keep /bis command for convenience
     self:RegisterChatCommand("bis", "Toggle")
-    -- Pre-warm module cache early to reduce lag on first slot click
-    if BiSPlanner_ModuleDataWarmCaches then BiSPlanner_ModuleDataWarmCaches() end
 end
 
 function BiSPlanner:OnEnable()
-    if BiSPlanner_InitUI then
-        BiSPlanner_InitUI()
-    end
-    if BiSPlanner_WarmItemDataCaches then
-        BiSPlanner_WarmItemDataCaches()
-    end
-    if BiSPlanner_PreWarmItemPicker then
-        BiSPlanner_PreWarmItemPicker()
-    end
     EnsureMinimapButton()
+    -- Heavy init (InitUI, WarmCaches, PreWarmItemPicker) deferred to first main window open
+end
+
+-- Called from Frame.lua OnShow when main window is first opened
+function BiSPlanner_OnFirstOpen()
+    if BiSPlanner_InitUI then BiSPlanner_InitUI() end
+    if BiSPlanner_WarmItemDataCaches then BiSPlanner_WarmItemDataCaches() end
+    if BiSPlanner_PreWarmItemPicker then BiSPlanner_PreWarmItemPicker() end
 end

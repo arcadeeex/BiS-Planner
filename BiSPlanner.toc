@@ -3,10 +3,10 @@
 ## Notes: BiS list builder for Sirus server - equip slots, stats, save/load sets
 ## Author: Arcade
 ## Version: 1.0
-## Dependencies: Ace3
 ## SavedVariables: BiSPlannerDB
 ## IconTexture: Interface\AddOns\BiSPlanner\Textures\BiSPlannerMinimap.blp
 
+Load_Libraries.xml
 Data\Modules\ModuleRegistry.lua
 Data\Modules\PVP.lua
 Data\Modules\WotLKDungeons.lua
@@ -25,6 +25,7 @@ Core\BiSPlanner.lua
 Core\ItemData.lua
 Core\ModuleData.lua
 Core\StatLabels.lua
+Core\RaidBuffs.lua
 Core\Stats.lua
 Libraries\UICompat.lua
 UI\Styles.lua

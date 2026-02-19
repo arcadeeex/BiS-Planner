@@ -312,21 +312,26 @@ local function BuildModuleCache()
     return out
 end
 
-local function SlotForLookup(slotId)
-    return (BiSPlanner_ResolveSlotQuery or BisEquip_ResolveSlotQuery)(slotId) or slotId
+local function SlotsForLookup(slotId)
+    local fn = BiSPlanner_ResolveSlotQueryList or BisEquip_ResolveSlotQueryList
+    if fn then return fn(slotId) or { slotId } end
+    return { (BiSPlanner_ResolveSlotQuery or BisEquip_ResolveSlotQuery)(slotId) or slotId }
 end
 
-local function BuildNodeForSlot(cache, nodeId, slotId)
+local function BuildNodeForSlot(cache, nodeId, lookupSlots)
     local node = cache.nodesById[nodeId]
     if not node then return nil end
     local children = {}
     for _, childId in ipairs(node.children or {}) do
-        local childNode = BuildNodeForSlot(cache, childId, slotId)
+        local childNode = BuildNodeForSlot(cache, childId, lookupSlots)
         if childNode then
             children[#children + 1] = childNode
         end
     end
-    local hasItems = node.aggBySlot[slotId] and next(node.aggBySlot[slotId]) ~= nil
+    local hasItems = false
+    for _, sid in ipairs(lookupSlots or {}) do
+        if node.aggBySlot[sid] and next(node.aggBySlot[sid]) ~= nil then hasItems = true break end
+    end
     if (not hasItems) and #children == 0 then
         return nil
     end
@@ -346,12 +351,12 @@ local function GetHierarchyForSlotFromModules(slotId)
     if cached then return cached end
     local c = BuildModuleCache()
     if not c then return {} end
-    local lookupSlot = SlotForLookup(slotId)
+    local lookupSlots = SlotsForLookup(slotId)
     local out = {}
     for _, mod in ipairs(c.modules) do
         local children = {}
         for _, rootId in ipairs(c.rootIdsByModule[mod.id] or {}) do
-            local n = BuildNodeForSlot(c, rootId, lookupSlot)
+            local n = BuildNodeForSlot(c, rootId, lookupSlots)
             if n then
                 children[#children + 1] = n
             end
@@ -395,21 +400,43 @@ end
 local function GetItemsForSlotFromModules(slotId, sourceFilter, difficultyFilter)
     local c = BuildModuleCache()
     if not c then return {} end
-    local lookupSlot = SlotForLookup(slotId)
+    local lookupSlots = SlotsForLookup(slotId)
     local diffId = tostring(difficultyFilter or ""):lower()
     local hasDifficultyFilter = diffId ~= ""
+    local isAllowed = (BiSPlanner_IsItemAllowedForSlot or BisEquip_IsItemAllowedForSlot) or function(_, _) return true end
+    local function mergeAndFilter(slotSet)
+        local out = {}
+        for itemId, _ in pairs(slotSet or {}) do
+            if isAllowed(slotId, itemId) then out[itemId] = true end
+        end
+        return out
+    end
+    local function mergeSlots(getSlotData)
+        local merged = {}
+        for _, sid in ipairs(lookupSlots) do
+            local data = getSlotData(sid)
+            for itemId, _ in pairs(data or {}) do merged[itemId] = true end
+        end
+        return merged
+    end
     if sourceFilter and sourceFilter ~= "" then
         local node = c.nodesById[sourceFilter]
         if not node then return {} end
+        local raw
         if hasDifficultyFilter then
-            return FlattenSet((node.aggBySlotByDifficulty[lookupSlot] or {})[diffId] or {})
+            raw = mergeSlots(function(sid) return (node.aggBySlotByDifficulty[sid] or {})[diffId] end)
+        else
+            raw = mergeSlots(function(sid) return node.aggBySlot[sid] end)
         end
-        return FlattenSet(node.aggBySlot[lookupSlot] or {})
+        return FlattenSet(mergeAndFilter(raw))
     end
+    local raw
     if hasDifficultyFilter then
-        return FlattenSet(((c.itemsBySlotByDifficulty[lookupSlot] or {})[diffId]) or {})
+        raw = mergeSlots(function(sid) return (c.itemsBySlotByDifficulty[sid] or {})[diffId] end)
+    else
+        raw = mergeSlots(function(sid) return c.itemsBySlot[sid] end)
     end
-    return FlattenSet(c.itemsBySlot[lookupSlot] or {})
+    return FlattenSet(mergeAndFilter(raw))
 end
 
 local function GetSourceDifficultiesFromModules(sourceFilter)

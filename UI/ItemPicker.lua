@@ -4,12 +4,13 @@ Single-column ItemRow (Icon, Name, ilvl, Boss), Preview panel with delta stats.
 ]]
 
 local S = BiSPlanner_Styles or {}
-local PICKER_WIDTH = S.PICKER_WIDTH or 760
-local PICKER_HEIGHT = S.PICKER_HEIGHT or 500
-local PICKER_SCROLL_INSET = 10  -- right inset so scrollbar has padding from window edge
-local DROPDOWN_ROW_OFFSET = 16  -- offset so dropdown content aligns with item row icon (dropdown has ~20px internal offset, icon at 4px)
+local PICKER_WIDTH = S.PICKER_WIDTH or 420
+local PICKER_HEIGHT = S.PICKER_HEIGHT or 600
+local PICKER_SCROLL_INSET = S.PICKER_SCROLL_INSET or 10
+local DROPDOWN_ROW_OFFSET = S.DROPDOWN_ROW_OFFSET or 16
 local ITEM_ROW_HEIGHT = S.ITEM_ROW_HEIGHT or 42
-local DROPDOWN_BUTTON_HEIGHT = 20
+local DROPDOWN_BUTTON_HEIGHT = S.DROPDOWN_BUTTON_HEIGHT or 20
+local ITEM_ROW_COUNT = S.PICKER_ITEM_ROW_COUNT or 80
 local ITEM_BUTTONS = {}
 local PickerFilters = { sourceSectionId = nil, difficultyId = nil, searchText = "" }
 local HOVERED_ITEM_ID = nil
@@ -67,7 +68,8 @@ end
 
 local function OnItemEnter(self)
     HOVERED_ITEM_ID = self.itemId
-    if self.bgTex then self.bgTex:SetVertexColor(0.16, 0.16, 0.16, 1) end
+    local h = S.ROW_BG_HOVER or { 0.16, 0.16, 0.16, 1 }
+    if self.bgTex then self.bgTex:SetVertexColor(h[1], h[2], h[3], h[4] or 1) end
     if self.itemId then
         local tt = GetPickerTooltip()
         local picker = BiSPlanner_ItemPickerFrame or BisEquip_ItemPickerFrame
@@ -84,7 +86,8 @@ end
 
 local function OnItemLeave(self)
     HOVERED_ITEM_ID = nil
-    if self.bgTex then self.bgTex:SetVertexColor(0.12, 0.12, 0.12, 1) end
+    local bg = S.ROW_BG or { 0.12, 0.12, 0.12, 1 }
+    if self.bgTex then self.bgTex:SetVertexColor(bg[1], bg[2], bg[3], bg[4] or 1) end
     if PickerTooltip then PickerTooltip:Hide() end
     GameTooltip:Hide()
     if BiSPlanner_RefreshPickerPreview then BiSPlanner_RefreshPickerPreview(nil) end
@@ -214,7 +217,7 @@ local function CreatePickerFrame()
         local bgTex = row:CreateTexture(nil, "BACKGROUND")
         bgTex:SetAllPoints()
         bgTex:SetTexture("Interface\\Buttons\\WHITE8x8")
-        bgTex:SetVertexColor(0.12, 0.12, 0.12, 1)
+        bgTex:SetVertexColor((S.ROW_BG or {0.12,0.12,0.12,1})[1], (S.ROW_BG or {})[2] or 0.12, (S.ROW_BG or {})[3] or 0.12, 1)
         row.bgTex = bgTex
 
         local icon = row:CreateTexture(nil, "ARTWORK")
@@ -362,6 +365,24 @@ function BiSPlanner_RefreshPickerPreview(itemId)
 
     local lines = {}
 
+    -- Weapon slots (16=main, 17=off): show DPS delta (ед. урона в секунду) at top
+    if (slotId == 16 or slotId == 17) and BiSPlanner_GetWeaponDamage then
+        local baseMin, baseMax, baseSpeed = BiSPlanner_GetWeaponDamage(currentItemId)
+        local newMin, newMax, newSpeed = BiSPlanner_GetWeaponDamage(itemId)
+        if newMin and newMax and newSpeed then
+            local baseDPS = 0
+            if baseMin and baseMax and baseSpeed and baseSpeed > 0 then
+                baseDPS = (baseMin + baseMax) / (2 * baseSpeed)
+            end
+            local newDPS = (newMin + newMax) / (2 * newSpeed)
+            local dpsDelta = newDPS - baseDPS
+            if dpsDelta ~= 0 then
+                local line = (dpsDelta < 0 and COLOR_LOSS or COLOR_GAIN) .. ("%s%.1f ед. урона/сек"):format(dpsDelta > 0 and "+" or "", dpsDelta) .. COLOR_END
+                lines[#lines + 1] = line
+            end
+        end
+    end
+
     -- Only stats that exist on at least one of the two items (exclude stats that are 0 on both)
     local getStats = BiSPlanner_GetItemStats or BisEquip_GetItemStats
     local baseSlot = getStats and (currentItemId and getStats(currentItemId) or {}) or {}
@@ -377,7 +398,13 @@ function BiSPlanner_RefreshPickerPreview(itemId)
     local entries = {}
     local hasArmorKey = allKeys["ARMOR"] or allKeys["ITEM_MOD_ARMOR_SHORT"]
     for k in pairs(allKeys) do
-        if not (k == "RESISTANCE0_NAME" and hasArmorKey) then
+        local skip = (k == "RESISTANCE0_NAME" and hasArmorKey)
+        -- Weapon slots: skip item DPS stat — already shown as "ед. урона/сек" above
+        if not skip and (slotId == 16 or slotId == 17) then
+            local name = DISPLAY_NAMES[k] or _G[k] or k
+            if tostring(name):find("урон") and tostring(name):find("секунд") then skip = true end
+        end
+        if not skip then
             local baseVal = baseTotal[k] or 0
             local newVal = newTotal[k] or 0
             local delta = newVal - baseVal
@@ -701,17 +728,12 @@ local function hookDropDownList1SetPoint()
         end
     end
 end
-local hookDefer = CreateFrame("Frame")
-hookDefer:SetScript("OnUpdate", function(self)
-    if _G.DropDownList1 then
-        self:SetScript("OnUpdate", nil)
-        hookDropDownList1SetPoint()
-    end
-end)
 
 do
     if hooksecurefunc then
         hooksecurefunc("ToggleDropDownMenu", function(level, value, dropdown)
+            -- Install SetPoint hook when DropDownList1 first exists (no per-frame polling)
+            if _G.DropDownList1 then hookDropDownList1SetPoint() end
             local name = dropdown and dropdown.GetName and dropdown:GetName()
             local isPickerDropdown = (name == "BiSPlanner_PickerSrcDropdown" or name == "BiSPlanner_PickerDiffDropdown" or name == "BisEquip_PickerSrcDropdown" or name == "BisEquip_PickerDiffDropdown")
             -- Hide msgLabel when picker dropdown is open so it doesn't overlap submenus
